@@ -69,12 +69,12 @@ function setupSheets() {
   roomSheet.appendRow(['R002', 'Forest View Cabin', 'single_room', 6999, 'active', 'Lower room']);
   roomSheet.appendRow(['R003', 'Vaadi - Entire Villa', 'full_villa', 21000, 'active', 'Both rooms']);
 
-  // 3. Reservations (main stay bookings) — Check-in = reservation/arrival date
+  // 3. Reservations (main stay bookings) — Check-in = reservation/arrival date. Total Room Fee = gross for stay (e.g. from Airbnb).
   ensureSheet(SHEET_RESERVATIONS, [
     'Reservation ID', 'Guest ID', 'Guest Name', 'Check-in', 'Booking Type', 'Nights', 'Booking Source',
-    'Display Price/Night', 'Total Discount', 'Final Amount', 'Tax (5%)', 'Airbnb Fee', 'Net Received',
+    'Total Room Fee', 'Display Price/Night', 'Total Discount', 'Final Amount', 'Tax (5%)', 'Airbnb Fee', 'Net Received',
     'Payout Date', 'Booking Date', 'Tip', 'Payee', 'Status', 'Notes', 'Created On', 'Last Updated'
-  ], [90, 80, 140, 100, 160, 60, 100, 120, 100, 100, 80, 100, 100, 100, 100, 80, 140, 90, 180, 130, 130], '#1a1a2e');
+  ], [90, 80, 140, 100, 160, 60, 100, 100, 120, 100, 100, 80, 100, 100, 100, 100, 80, 140, 90, 180, 130, 130], '#1a1a2e');
 
   // 4. Experiences (cab, trek, bonfire, etc.)
   ensureSheet(SHEET_EXPERIENCES, [
@@ -186,20 +186,21 @@ var TOOLS = [
   // ── Booking tools ─────────────────────────────────────────
   {
     name: 'add_booking',
-    description: 'Create a new reservation. Status is set to reserved until check-in. Booking type: Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa. Source: Airbnb | Direct | WhatsApp | Instagram. Auto-fills final amount from nights and price; optional discount, tax, fee, net_received, payee.',
+    description: 'Create a new reservation. Status is set to reserved until check-in. Provide either total_room_fee (e.g. 104140 for 13 nights — use this for Airbnb dynamic pricing) or price_per_night. We derive final amount = room fee − discount, then tax/fee/net for Airbnb.',
     input_schema: {
       type: 'object',
       properties: {
         guest_name:           { type: 'string', description: 'Full name of the guest' },
-        phone:                { type: 'string', description: 'Guest phone number' },
+        phone:                { type: 'string', description: 'Optional. Guest phone number' },
         check_in:             { type: 'string', description: 'Check-in / reservation date YYYY-MM-DD' },
         check_out:            { type: 'string', description: 'Check-out date YYYY-MM-DD (or use nights)' },
-        price_per_night:      { type: 'number', description: 'Display price per night in rupees' },
+        total_room_fee:       { type: 'number', description: 'Total/gross room fee for the stay in rupees (e.g. 104140 for 13 nights). Use for Airbnb — we derive price per night and final amount from this.' },
+        price_per_night:      { type: 'number', description: 'Optional. Display price per night — use only if you do not have total_room_fee (e.g. fixed rate direct booking)' },
         booking_type:         { type: 'string', description: 'Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa' },
         booking_source:       { type: 'string', description: 'Airbnb | Direct | WhatsApp | Instagram' },
         nights:               { type: 'number', description: 'Number of nights (or derived from check_in/check_out)' },
-        total_discount:       { type: 'number', description: 'Total discount in rupees' },
-        final_amount:         { type: 'number', description: 'Final amount (or derived)' },
+        total_discount:       { type: 'number', description: 'Total discount in rupees (e.g. nightly rate adjustment from Airbnb)' },
+        final_amount:         { type: 'number', description: 'Final amount (or derived as total_room_fee − total_discount)' },
         tax:                  { type: 'number', description: 'Tax amount' },
         airbnb_fee:           { type: 'number', description: 'Host service fee if Airbnb' },
         net_received:         { type: 'number', description: 'Net received in rupees' },
@@ -208,7 +209,7 @@ var TOOLS = [
         payee:                { type: 'string', description: 'Who received payment e.g. Amar Acc, Jyoti UPI' },
         notes:                { type: 'string', description: 'Optional notes' }
       },
-      required: ['guest_name', 'phone', 'check_in', 'check_out', 'price_per_night']
+      required: ['guest_name', 'check_in', 'check_out']
     }
   },
   {
@@ -225,6 +226,7 @@ var TOOLS = [
         booking_type:     { type: 'string', description: 'Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa' },
         booking_source:  { type: 'string', description: 'Airbnb | Direct | WhatsApp | Instagram' },
         nights:          { type: 'number', description: 'Number of nights' },
+        total_room_fee:  { type: 'number', description: 'Total/gross room fee for the stay — recalculates Display Price/Night, Final Amount, and (if Airbnb) tax/fee/net' },
         display_price_per_night: { type: 'number', description: 'Display price per night' },
         total_discount:  { type: 'number', description: 'Total discount — recalculates Final Amount and (if Airbnb) tax/fee/net' },
         price_per_night: { type: 'number', description: 'Updated nightly rate' },
@@ -545,7 +547,8 @@ var SYSTEM_PROMPT = [
   '- Map payment descriptions to: cash/upi/bank_transfer/advance/refund',
   '- If user says "update/fix/correct a charge or payment" use edit_transaction, not add_charge/add_payment',
   '- If user says "wrong entry" or "mistake" offer to delete_transaction or edit_transaction',
-  '- When creating a booking from Airbnb: use booking_source=Airbnb; Final Amount = subtotal after discount (amount before tax/fee); total_discount = nightly rate adjustment; tax (5%) and airbnb_fee (15.5%) on that subtotal; net_received = host payout. Check-out must be after check-in.',
+  '- When creating a booking from Airbnb: use total_room_fee = gross room fee (e.g. 104140 for 13 nights), total_discount = nightly rate adjustment if any; do not ask for price per night (dynamic pricing). If the user gives both room fee and discount in the same message (e.g. "104140, discount 10414"), create the booking in one add_booking call with both — do not create first and then update. booking_source=Airbnb; tax (5%) and airbnb_fee (15.5%) are calculated from subtotal; net_received = host payout. Check-out must be after check-in.',
+  '- To add or change a discount on an existing booking: use edit_booking with booking_id (reservation ID or guest name) and total_discount. This recalculates Final Amount, Tax, Airbnb Fee, and Net Received. Same for updating total room fee, nights, or price.',
   '- After every tool call reply with a short, friendly summary',
   '- Show all amounts with the rupee symbol',
   '- Keep replies brief — this is a quick admin tool',
@@ -718,8 +721,10 @@ function getOrCreateGuest(name, phone) {
   var n = (name + '').trim().toLowerCase();
   var p = (phone + '').trim();
   var existing = data.filter(function(r){
-    return (r['Name'] && r['Name'].toString().toLowerCase().indexOf(n)!==-1) ||
-           (r['Phone'] && r['Phone'].toString().indexOf(p)!==-1);
+    var nameMatch = r['Name'] && r['Name'].toString().toLowerCase().indexOf(n) !== -1;
+    if (!nameMatch) return false;
+    if (!p) return true;
+    return r['Phone'] && r['Phone'].toString().indexOf(p) !== -1;
   })[0];
   if (existing) {
     updateGuestLastUsed(existing['Guest ID']);
@@ -973,6 +978,11 @@ function toolAddBooking(a) {
   var d1 = toDate(a.check_in);
   var d2 = toDate(a.check_out);
   if (d1 && d2 && d2 <= d1) return { error: 'Check-out date must be after check-in date. Please correct the dates.' };
+  var totalRoomFee = a.total_room_fee != null && a.total_room_fee !== '' ? Number(a.total_room_fee) : null;
+  var pricePerNightInput = a.price_per_night != null && a.price_per_night !== '' ? Number(a.price_per_night) : null;
+  if ((totalRoomFee == null || isNaN(totalRoomFee) || totalRoomFee <= 0) && (pricePerNightInput == null || isNaN(pricePerNightInput) || pricePerNightInput <= 0)) {
+    return { error: 'Provide either total_room_fee (total room fee for the stay, e.g. 104140 for 13 nights from Airbnb) or price_per_night.' };
+  }
   var guestId = getOrCreateGuest(a.guest_name, a.phone || '');
   var sheet   = getRSV();
   var id     = nextId(sheet, 'Reservation ID', 'R');
@@ -980,11 +990,16 @@ function toolAddBooking(a) {
   var bookingType = a.booking_type || 'Forest View Cabin';
   var bookingSource = normaliseBookingSource(a.booking_source || 'Direct');
   var source = bookingSource.toLowerCase();
-  var pricePerNight = Number(a.price_per_night) || 0;
   var discount = Number(a.total_discount) || 0;
-  // Final Amount = (price/night × nights) - discount (or use provided final_amount)
-  var finalAmount = a.final_amount != null ? Number(a.final_amount) : Math.round(pricePerNight * nights - discount);
-  finalAmount = Math.max(0, finalAmount);
+  var pricePerNight, finalAmount;
+  if (totalRoomFee != null && !isNaN(totalRoomFee) && totalRoomFee > 0) {
+    pricePerNight = nights >= 1 ? Math.round(totalRoomFee / nights) : 0;
+    finalAmount = a.final_amount != null ? Number(a.final_amount) : Math.max(0, Math.round(totalRoomFee - discount));
+  } else {
+    pricePerNight = pricePerNightInput || 0;
+    finalAmount = a.final_amount != null ? Number(a.final_amount) : Math.round(pricePerNight * nights - discount);
+    finalAmount = Math.max(0, finalAmount);
+  }
   // Tax 5% and Airbnb fee 15.5% when source is Airbnb; otherwise 0
   var tax = 0, airbnbFee = 0, netReceived = 0;
   if (a.tax != null && a.airbnb_fee != null && a.net_received != null) {
@@ -999,9 +1014,10 @@ function toolAddBooking(a) {
     netReceived = a.net_received != null ? Number(a.net_received) : finalAmount;
   }
   netReceived = Math.max(0, netReceived);
+  var totalRoomFeeForSheet = (totalRoomFee != null && totalRoomFee > 0) ? totalRoomFee : (pricePerNight * nights);
   sheet.appendRow([
     id, guestId, a.guest_name, parseDate(a.check_in), bookingType, nights, bookingSource,
-    pricePerNight, discount, finalAmount, tax, airbnbFee, netReceived,
+    totalRoomFeeForSheet, pricePerNight, discount, finalAmount, tax, airbnbFee, netReceived,
     a.payout_date || '', parseDate(a.booking_date || a.check_in), Number(a.tip) || 0, a.payee || '',
     'reserved', a.notes || '', now(), now()
   ]);
@@ -1021,6 +1037,7 @@ function toolEditBooking(a) {
   if (a.booking_type) updates['Booking Type'] = a.booking_type;
   if (a.nights != null) updates['Nights'] = Math.max(1, Number(a.nights));
   if (a.booking_source) updates['Booking Source'] = normaliseBookingSource(a.booking_source);
+  if (a.total_room_fee != null) updates['Total Room Fee'] = Number(a.total_room_fee);
   if (a.display_price_per_night != null) updates['Display Price/Night'] = a.display_price_per_night;
   if (a.total_discount != null) updates['Total Discount'] = a.total_discount;
   if (a.final_amount != null) updates['Final Amount'] = a.final_amount;
@@ -1032,19 +1049,28 @@ function toolEditBooking(a) {
   if (a.tip != null) updates['Tip'] = a.tip;
   if (a.payee != null) updates['Payee'] = a.payee;
 
-  // When discount, price per night, or nights change: recompute Final Amount = (price × nights) - discount
-  var pricePerNight = a.display_price_per_night != null ? Number(a.display_price_per_night) : (Number(booking['Display Price/Night']) || 0);
   var nights = a.nights != null ? Math.max(1, Number(a.nights)) : Math.max(1, Number(booking['Nights']) || 1);
   var totalDiscount = a.total_discount != null ? Number(a.total_discount) : (Number(booking['Total Discount']) || 0);
-  if (a.total_discount != null || a.display_price_per_night != null || a.nights != null) {
+
+  // When total_room_fee is updated: derive Display Price/Night and Final Amount from it
+  if (a.total_room_fee != null && !isNaN(Number(a.total_room_fee))) {
+    var trf = Number(a.total_room_fee);
+    updates['Total Room Fee'] = trf;
+    updates['Display Price/Night'] = nights >= 1 ? Math.round(trf / nights) : 0;
+    updates['Final Amount'] = Math.max(0, Math.round(trf - totalDiscount));
+  }
+  // When discount, price per night, or nights change (and not total_room_fee): recompute Final Amount and keep Total Room Fee in sync
+  var pricePerNight = a.display_price_per_night != null ? Number(a.display_price_per_night) : (Number(booking['Display Price/Night']) || 0);
+  if (!(a.total_room_fee != null && !isNaN(Number(a.total_room_fee))) && (a.total_discount != null || a.display_price_per_night != null || a.nights != null)) {
     var derivedFinal = Math.max(0, Math.round(pricePerNight * nights - totalDiscount));
     updates['Final Amount'] = derivedFinal;
+    updates['Total Room Fee'] = pricePerNight * nights;
   }
 
   // Recalc tax (5%) and Airbnb fee (15.5%) when final_amount or booking_source changes
   var finalAmt = updates['Final Amount'] != null ? Number(updates['Final Amount']) : (a.final_amount != null ? Number(a.final_amount) : (Number(booking['Final Amount']) || 0));
   var src = (a.booking_source || booking['Booking Source'] || '').toString().toLowerCase();
-  if (src.indexOf('airbnb') !== -1 && (updates['Final Amount'] != null || a.final_amount != null || a.booking_source != null || a.total_discount != null || a.display_price_per_night != null || a.nights != null)) {
+  if (src.indexOf('airbnb') !== -1 && (updates['Final Amount'] != null || a.final_amount != null || a.booking_source != null || a.total_discount != null || a.display_price_per_night != null || a.nights != null || (a.total_room_fee != null && !isNaN(Number(a.total_room_fee))))) {
     if (a.tax == null) { var taxVal = Math.round(finalAmt * 0.05); updates['Tax (5%)'] = taxVal; }
     if (a.airbnb_fee == null) { var feeVal = Math.round(finalAmt * 0.155); updates['Airbnb Fee'] = feeVal; }
     if (a.net_received == null) {
@@ -1052,7 +1078,7 @@ function toolEditBooking(a) {
       var fee = updates['Airbnb Fee'] != null ? updates['Airbnb Fee'] : (Number(booking['Airbnb Fee']) || 0);
       updates['Net Received'] = Math.max(0, finalAmt - tax - fee);
     }
-  } else if ((src.indexOf('direct') !== -1 || src.indexOf('whatsapp') !== -1 || src.indexOf('instagram') !== -1) && (a.booking_source != null || updates['Final Amount'] != null)) {
+  } else if ((src.indexOf('direct') !== -1 || src.indexOf('whatsapp') !== -1 || src.indexOf('instagram') !== -1) && (a.booking_source != null || updates['Final Amount'] != null || (a.total_room_fee != null && !isNaN(Number(a.total_room_fee))))) {
     if (a.tax == null) updates['Tax (5%)'] = 0;
     if (a.airbnb_fee == null) updates['Airbnb Fee'] = 0;
     if (a.net_received == null) updates['Net Received'] = finalAmt;
@@ -1092,7 +1118,7 @@ function toolGetBooking(a) {
     booking: {
       id: r['Reservation ID'], guest_id: r['Guest ID'], guest: r['Guest Name'],
       check_in: r['Check-in'], booking_type: r['Booking Type'], nights: r['Nights'],
-      booking_source: r['Booking Source'], display_price_per_night: r['Display Price/Night'],
+      booking_source: r['Booking Source'], total_room_fee: r['Total Room Fee'], display_price_per_night: r['Display Price/Night'],
       total_discount: r['Total Discount'], final_amount: r['Final Amount'],
       tax: r['Tax (5%)'], airbnb_fee: r['Airbnb Fee'], net_received: r['Net Received'],
       payout_date: r['Payout Date'], booking_date: r['Booking Date'], tip: r['Tip'], payee: r['Payee'],

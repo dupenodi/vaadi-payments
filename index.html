@@ -395,7 +395,9 @@
 
     <div class="quick-bar">
       <button class="chip" onclick="q('List active bookings')">active bookings</button>
+      <button class="chip" onclick="q('List upcoming bookings')">upcoming bookings</button>
       <button class="chip" onclick="q('Add new booking')">+ new booking</button>
+      <button class="chip" onclick="q('Update a reservation (e.g. add discount, change dates)')">update reservation</button>
       <button class="chip" onclick="q('Show report for this month')">monthly report</button>
       <button class="chip" onclick="q('Add food charge')">+ food</button>
       <button class="chip" onclick="q('Add vehicle charge')">+ vehicle</button>
@@ -414,7 +416,7 @@
 
     <div class="input-area">
       <div class="input-row">
-        <textarea id="input" rows="1" placeholder="e.g. Priya Sharma checked in today, 5 nights at ₹2500/night"
+        <textarea id="input" rows="1" placeholder="e.g. Zach Lowry Apr 15–28, Forest View, Airbnb, room fee 104140 discount 10414"
           onkeydown="onKey(event)" oninput="resize(this)"></textarea>
         <button class="send-btn" id="sendBtn" onclick="send()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"

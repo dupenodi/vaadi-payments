@@ -24,9 +24,9 @@ Seed rows:
 
 ### 3. Reservations (main stay bookings)
 ```
-Reservation ID,Guest ID,Guest Name,Check-in,Booking Type,Nights,Booking Source,Display Price/Night,Total Discount,Final Amount,Tax (5%),Airbnb Fee,Net Received,Payout Date,Booking Date,Tip,Payee,Status,Notes,Created On,Last Updated
+Reservation ID,Guest ID,Guest Name,Check-in,Booking Type,Nights,Booking Source,Total Room Fee,Display Price/Night,Total Discount,Final Amount,Tax (5%),Airbnb Fee,Net Received,Payout Date,Booking Date,Tip,Payee,Status,Notes,Created On,Last Updated
 ```
-*Check-in = reservation/arrival date. Booking Type = Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa. Booking Source = Airbnb | Direct | WhatsApp | Instagram.*
+*Check-in = reservation/arrival date. Total Room Fee = gross room fee for the stay (e.g. 104140 for 13 nights from Airbnb). Display Price/Night = derived as Total Room Fee ÷ Nights. Booking Type = Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa. Booking Source = Airbnb | Direct | WhatsApp | Instagram.*
 
 ### 4. Experiences (trek, cab, bonfire, etc.)
 ```
