@@ -1,0 +1,1651 @@
+// ============================================================
+// CABIN MANAGER — Google Apps Script Backend (max capabilities)
+// ============================================================
+// SETUP:
+//   1. Open your Google Sheet → Extensions → Apps Script → paste this file (so menu shows when sheet is open)
+//      OR script.google.com → New project → paste this file (no menu unless you bind the script to the sheet)
+//   2. Project Settings → Script Properties → add: ANTHROPIC_API_KEY, SHEET_ID
+//   3. Run setupSheets() once — creates 9 tabs
+//   4. Deploy → Web app (Execute as: Me, Who has access: Anyone) → copy URL to index.html BACKEND_URL
+//   Menu "Vaadi" (Refresh Dashboard, Setup Sheets, About) appears when the sheet is opened and script is bound to it.
+//   Image support: frontend sends POST with JSON body when user attaches/pastes an image; doPost returns JSON with CORS headers.
+// ============================================================
+
+// ── CONFIG ───────────────────────────────────────────────────
+var CONFIG = {
+  model:       'claude-haiku-4-5',  // claude-haiku-4-5 | claude-sonnet-4-6 | claude-opus-4-6
+  max_tokens:  1536,
+  temperature: 0.2
+};
+
+var PAYMENT_METHODS = ['cash', 'upi', 'bank_transfer', 'advance', 'refund'];
+
+var BOOKING_STATUSES = ['active', 'checked_out', 'cancelled', 'reserved'];
+
+// Experience types (Experiences sheet — exact column values)
+var EXPERIENCE_TYPES = ['Trek', 'Forest Walk', 'Meditation', 'Camping', 'Custom Tour', 'Bonfire', 'Cab Service', 'Mattress', 'Horse/Mule service'];
+
+// Expense categories (Expenses sheet — match dropdown: Groceries, Cleaning, Staff, etc.)
+var EXPENSE_CATEGORIES = ['Groceries', 'Cleaning', 'Staff', 'Utilities', 'Internet', 'Maintenance', 'Marketing', 'Transport', 'Supplies', 'Misc', 'Electricity'];
+
+// ─────────────────────────────────────────────────────────────
+
+var ANTHROPIC_API_KEY = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+var SHEET_ID          = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
+var SHEET_GUESTS      = 'Guests';
+var SHEET_ROOMS       = 'Rooms';
+var SHEET_RESERVATIONS= 'Reservations';
+var SHEET_EXPERIENCES = 'Experiences';
+var SHEET_FOOD        = 'Food';
+var SHEET_PAYMENTS    = 'Payments';
+var SHEET_EXPENSES    = 'Expenses';
+var SHEET_AUDIT       = 'AuditLog';
+var SHEET_DASHBOARD   = 'Dashboard';
+
+// Booking types (room names) — full cabin has 2 rooms: upper + lower, or entire villa
+var BOOKING_TYPES = ['Sky View Cabin', 'Forest View Cabin', 'Vaadi - Entire Villa'];
+var BOOKING_SOURCES = ['Airbnb', 'Direct', 'WhatsApp', 'Instagram'];
+
+// ── One-time sheet setup (creates 9 tabs; run once) ───────────
+function setupSheets() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+
+  function ensureSheet(name, headers, colWidths, bgColor) {
+    var sheet = ss.getSheetByName(name);
+    if (sheet) ss.deleteSheet(sheet);
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(headers);
+    sheet.getRange(1, 1, 1, headers.length).setBackground(bgColor || '#1a1a2e').setFontColor('#ffffff').setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    if (colWidths) colWidths.forEach(function(w, i) { sheet.setColumnWidth(i + 1, w); });
+    return sheet;
+  }
+
+  // 1. Guests
+  ensureSheet(SHEET_GUESTS, ['Guest ID', 'Name', 'Phone', 'Email', 'Notes', 'Created At', 'Last Used At'], [80, 140, 120, 140, 180, 140, 140], '#1a2e2e');
+
+  // 2. Rooms — 2 rooms (upper/lower) + entire villa
+  var roomSheet = ensureSheet(SHEET_ROOMS, ['Room ID', 'Name', 'Type', 'Default Rate', 'Status', 'Notes'], [80, 180, 100, 100, 80, 200], '#2e1a2e');
+  roomSheet.appendRow(['R001', 'Sky View Cabin', 'single_room', 6999, 'active', 'Upper room']);
+  roomSheet.appendRow(['R002', 'Forest View Cabin', 'single_room', 6999, 'active', 'Lower room']);
+  roomSheet.appendRow(['R003', 'Vaadi - Entire Villa', 'full_villa', 21000, 'active', 'Both rooms']);
+
+  // 3. Reservations (main stay bookings) — Check-in = reservation/arrival date
+  ensureSheet(SHEET_RESERVATIONS, [
+    'Reservation ID', 'Guest ID', 'Guest Name', 'Check-in', 'Booking Type', 'Nights', 'Booking Source',
+    'Display Price/Night', 'Total Discount', 'Final Amount', 'Tax (5%)', 'Airbnb Fee', 'Net Received',
+    'Payout Date', 'Booking Date', 'Tip', 'Payee', 'Status', 'Notes', 'Created On', 'Last Updated'
+  ], [90, 80, 140, 100, 160, 60, 100, 120, 100, 100, 80, 100, 100, 100, 100, 80, 140, 90, 180, 130, 130], '#1a1a2e');
+
+  // 4. Experiences (cab, trek, bonfire, etc.)
+  ensureSheet(SHEET_EXPERIENCES, [
+    'Txn ID', 'Reservation ID', 'Date', 'Guest Name', 'Experience Type', 'No. of People',
+    'Price per Person', 'Total Amount', 'Cost', 'Net Profit', 'Payment Mode', 'Notes', 'Created At'
+  ], [80, 100, 100, 140, 120, 80, 110, 100, 90, 90, 100, 220, 130], '#1a2e1a');
+
+  // 5. Food
+  ensureSheet(SHEET_FOOD, [
+    'Txn ID', 'Reservation ID', 'Date', 'Guest', 'Stay Nights', 'People', 'Rate per Person per Day',
+    'Base Food Revenue', 'Food Cost', 'Special Request Charge', 'Total Food Revenue', 'Food Profit', 'Payee', 'Notes', 'Created At'
+  ], [80, 100, 100, 140, 80, 60, 140, 120, 90, 140, 120, 90, 120, 180, 130], '#2e2e1a');
+
+  // 6. Payments
+  ensureSheet(SHEET_PAYMENTS, ['Txn ID', 'Reservation ID', 'Date', 'Amount', 'Method', 'Reference', 'Payee', 'Notes', 'Created At'], [80, 100, 100, 90, 100, 140, 120, 180, 130], '#2e2e1a');
+
+  // 7. Expenses (operational)
+  ensureSheet(SHEET_EXPENSES, ['Txn ID', 'Date', 'Category', 'Sub-category', 'Description', 'Amount', 'Paid From', 'Created At'], [80, 100, 100, 100, 180, 90, 140, 130], '#2e1a1a');
+
+  // 8. AuditLog
+  ensureSheet(SHEET_AUDIT, ['Timestamp', 'Actor', 'Action', 'Entity Type', 'Entity ID', 'Details'], [140, 80, 120, 100, 80, 280], '#2a2a2a');
+
+  // 9. Dashboard (metrics) — run refreshDashboard() to fill values
+  var dashSheet = ensureSheet(SHEET_DASHBOARD, ['Section', 'Metric', 'Value', 'Period', 'Updated At'], [140, 220, 120, 100, 140], '#1a1a3e');
+  var dashRows = [
+    ['— SUMMARY —', '', '', '', ''],
+    ['Summary', 'Total Reservations', '', 'All time', ''],
+    ['Summary', 'Stay Revenue (Net Received)', '', 'All time', ''],
+    ['Summary', 'Airbnb Revenue', '', 'All time', ''],
+    ['Summary', 'Direct Revenue', '', 'All time', ''],
+    ['Summary', 'Experience Profit', '', 'All time', ''],
+    ['Summary', 'Food Profit', '', 'All time', ''],
+    ['Summary', 'Total Expenses', '', 'All time', ''],
+    ['Summary', 'Net Profit', '', 'All time', ''],
+    ['Summary', 'Outstanding Dues (count)', '', 'All time', ''],
+    ['Summary', 'Outstanding Dues (amount)', '', 'All time', ''],
+    ['— THIS MONTH —', '', '', '', ''],
+    ['Month', 'Reservations', '', 'Month', ''],
+    ['Month', 'Stay Revenue', '', 'Month', ''],
+    ['Month', 'Experience Profit', '', 'Month', ''],
+    ['Month', 'Food Profit', '', 'Month', ''],
+    ['Month', 'Expenses', '', 'Month', ''],
+    ['Month', 'Net Profit', '', 'Month', ''],
+    ['— BY BOOKING TYPE —', '', '', '', ''],
+    ['By Type', 'Sky View Cabin (count)', '', 'All time', ''],
+    ['By Type', 'Sky View Cabin (revenue)', '', 'All time', ''],
+    ['By Type', 'Forest View Cabin (count)', '', 'All time', ''],
+    ['By Type', 'Forest View Cabin (revenue)', '', 'All time', ''],
+    ['By Type', 'Vaadi - Entire Villa (count)', '', 'All time', ''],
+    ['By Type', 'Vaadi - Entire Villa (revenue)', '', 'All time', ''],
+    ['— EXPERIENCE BY TYPE —', '', '', '', ''],
+    ['Experiences', 'Trek', '', 'All time', ''],
+    ['Experiences', 'Forest Walk', '', 'All time', ''],
+    ['Experiences', 'Meditation', '', 'All time', ''],
+    ['Experiences', 'Camping', '', 'All time', ''],
+    ['Experiences', 'Custom Tour', '', 'All time', ''],
+    ['Experiences', 'Bonfire', '', 'All time', ''],
+    ['Experiences', 'Cab Service', '', 'All time', ''],
+    ['Experiences', 'Mattress', '', 'All time', ''],
+    ['Experiences', 'Horse/Mule service', '', 'All time', ''],
+    ['— EXPENSES BY CATEGORY —', '', '', '', ''],
+    ['Expenses', 'Groceries', '', 'All time', ''],
+    ['Expenses', 'Cleaning', '', 'All time', ''],
+    ['Expenses', 'Staff', '', 'All time', ''],
+    ['Expenses', 'Utilities', '', 'All time', ''],
+    ['Expenses', 'Internet', '', 'All time', ''],
+    ['Expenses', 'Maintenance', '', 'All time', ''],
+    ['Expenses', 'Marketing', '', 'All time', ''],
+    ['Expenses', 'Transport', '', 'All time', ''],
+    ['Expenses', 'Supplies', '', 'All time', ''],
+    ['Expenses', 'Misc', '', 'All time', ''],
+    ['Expenses', 'Electricity', '', 'All time', '']
+  ];
+  dashRows.forEach(function(r) { dashSheet.appendRow(r); });
+
+  Logger.log('All 9 sheets created: Guests, Rooms, Reservations, Experiences, Food, Payments, Expenses, AuditLog, Dashboard.');
+}
+
+// ── Custom menu (shows when this script is bound to the sheet: Extensions > Apps Script) ─
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Vaadi')
+    .addItem('Refresh Dashboard', 'refreshDashboard')
+    .addItem('Setup Sheets (recreate all tabs)', 'menuSetupSheets')
+    .addSeparator()
+    .addItem('About', 'menuAbout')
+    .addToUi();
+}
+
+function menuSetupSheets() {
+  var ui = SpreadsheetApp.getUi();
+  var ok = ui.alert('Setup Sheets', 'This will recreate all 9 tabs and delete existing data in them. Continue?', ui.ButtonSet.YES_NO);
+  if (ok === ui.Button.YES) {
+    setupSheets();
+    ui.alert('Done', 'Sheets recreated. Refresh the spreadsheet if you don\'t see the new tabs.', ui.ButtonSet.OK);
+  }
+}
+
+function menuAbout() {
+  SpreadsheetApp.getUi().alert(
+    'Vaadi Cabin Manager',
+    'Reservations, Experiences, Food, Payments, Expenses.\n\nRefresh Dashboard: updates the Dashboard tab with current numbers.\n\nSetup Sheets: recreates all tabs (use only on a fresh sheet or when resetting).',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+// ── Tool definitions ──────────────────────────────────────────
+var TOOLS = [
+  // ── Booking tools ─────────────────────────────────────────
+  {
+    name: 'add_booking',
+    description: 'Create a new reservation. Status is set to reserved until check-in. Booking type: Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa. Source: Airbnb | Direct | WhatsApp | Instagram. Auto-fills final amount from nights and price; optional discount, tax, fee, net_received, payee.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        guest_name:           { type: 'string', description: 'Full name of the guest' },
+        phone:                { type: 'string', description: 'Guest phone number' },
+        check_in:             { type: 'string', description: 'Check-in / reservation date YYYY-MM-DD' },
+        check_out:            { type: 'string', description: 'Check-out date YYYY-MM-DD (or use nights)' },
+        price_per_night:      { type: 'number', description: 'Display price per night in rupees' },
+        booking_type:         { type: 'string', description: 'Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa' },
+        booking_source:       { type: 'string', description: 'Airbnb | Direct | WhatsApp | Instagram' },
+        nights:               { type: 'number', description: 'Number of nights (or derived from check_in/check_out)' },
+        total_discount:       { type: 'number', description: 'Total discount in rupees' },
+        final_amount:         { type: 'number', description: 'Final amount (or derived)' },
+        tax:                  { type: 'number', description: 'Tax amount' },
+        airbnb_fee:           { type: 'number', description: 'Host service fee if Airbnb' },
+        net_received:         { type: 'number', description: 'Net received in rupees' },
+        payout_date:          { type: 'string', description: 'Payout date' },
+        tip:                  { type: 'number', description: 'Tip if any' },
+        payee:                { type: 'string', description: 'Who received payment e.g. Amar Acc, Jyoti UPI' },
+        notes:                { type: 'string', description: 'Optional notes' }
+      },
+      required: ['guest_name', 'phone', 'check_in', 'check_out', 'price_per_night']
+    }
+  },
+  {
+    name: 'edit_booking',
+    description: 'Edit an existing booking — update guest name, phone, check-in, check-out, nightly rate, total discount, status, or notes. Updating discount, display price, or nights recalculates Final Amount and (for Airbnb) Tax, Airbnb Fee, Net Received.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id:      { type: 'string', description: 'Reservation ID e.g. R001, or guest name' },
+        guest_name:      { type: 'string', description: 'Updated guest name' },
+        phone:           { type: 'string', description: 'Updated phone number' },
+        check_in:        { type: 'string', description: 'Updated check-in date YYYY-MM-DD' },
+        check_out:       { type: 'string', description: 'Updated check-out date YYYY-MM-DD' },
+        booking_type:     { type: 'string', description: 'Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa' },
+        booking_source:  { type: 'string', description: 'Airbnb | Direct | WhatsApp | Instagram' },
+        nights:          { type: 'number', description: 'Number of nights' },
+        display_price_per_night: { type: 'number', description: 'Display price per night' },
+        total_discount:  { type: 'number', description: 'Total discount — recalculates Final Amount and (if Airbnb) tax/fee/net' },
+        price_per_night: { type: 'number', description: 'Updated nightly rate' },
+        status:          { type: 'string', description: 'active | checked_out | cancelled | reserved' },
+        notes:           { type: 'string', description: 'Updated notes' }
+      },
+      required: ['booking_id']
+    }
+  },
+  {
+    name: 'delete_booking',
+    description: 'Delete a booking and all its transactions. Only use for cancellations or mistakes — ask user to confirm first.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID e.g. R001, or guest name' },
+        confirm:    { type: 'boolean', description: 'Must be true to proceed — confirm deletion with user first' }
+      },
+      required: ['booking_id', 'confirm']
+    }
+  },
+  {
+    name: 'list_bookings',
+    description: 'List bookings. Filter by status or date range.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status:    { type: 'string', description: 'active | checked_out | cancelled | reserved | all. Default: active' },
+        from_date: { type: 'string', description: 'Optional — filter by check-in date from YYYY-MM-DD' },
+        to_date:   { type: 'string', description: 'Optional — filter by check-in date to YYYY-MM-DD' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'get_booking',
+    description: 'Get a single booking by ID or guest name. Returns booking row only (no charges/payments list). Use get_summary for full breakdown.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID e.g. R001, or guest name' }
+      },
+      required: ['booking_id']
+    }
+  },
+  {
+    name: 'get_summary',
+    description: 'Full summary of a booking: guest info, itemised charges, all payments, and balance due.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID e.g. R001, or guest name' }
+      },
+      required: ['booking_id']
+    }
+  },
+  {
+    name: 'find_guest',
+    description: 'Search for a guest by name or phone number across all bookings.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Guest name or phone number to search for' }
+      },
+      required: ['query']
+    }
+  },
+
+  // ── Charge tools ──────────────────────────────────────────
+  {
+    name: 'add_charge',
+    description: 'Add an experience charge to a booking. Experience type: Trek | Forest Walk | Meditation | Camping | Custom Tour | Bonfire | Cab Service | Mattress | Horse/Mule service.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID e.g. R001, or guest name' },
+        category:   { type: 'string', description: 'Trek | Forest Walk | Meditation | Camping | Custom Tour | Bonfire | Cab Service | Mattress | Horse/Mule service (or keyword e.g. cab, trek)' },
+        amount:     { type: 'number', description: 'Amount in rupees' },
+        notes:      { type: 'string', description: 'Detail e.g. "dinner for 2", "Manali drop"' }
+      },
+      required: ['booking_id', 'category', 'amount']
+    }
+  },
+  {
+    name: 'edit_transaction',
+    description: 'Edit an existing charge or payment — correct the amount, category, method, or notes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        txn_id:   { type: 'string', description: 'Transaction ID e.g. E001, F001, P001, X001' },
+        category: { type: 'string', description: 'Updated category for charges' },
+        amount:   { type: 'number', description: 'Corrected amount in rupees' },
+        method:   { type: 'string', description: 'Updated payment method (for payments)' },
+        reference:{ type: 'string', description: 'Updated reference ID' },
+        notes:    { type: 'string', description: 'Updated notes' }
+      },
+      required: ['txn_id']
+    }
+  },
+  {
+    name: 'delete_transaction',
+    description: 'Delete a charge or payment and recalculate booking totals. Use to fix mistakes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        txn_id:  { type: 'string', description: 'Transaction ID e.g. E001, F001, P001, X001' },
+        confirm: { type: 'boolean', description: 'Must be true — confirm with user before deleting' }
+      },
+      required: ['txn_id', 'confirm']
+    }
+  },
+
+  // ── Payment tools ─────────────────────────────────────────
+  {
+    name: 'add_payment',
+    description: 'Record a payment from a guest. Method: cash | upi | bank_transfer | advance | refund.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID e.g. R001, or guest name' },
+        amount:     { type: 'number', description: 'Amount in rupees' },
+        method:     { type: 'string', description: 'cash | upi | bank_transfer | advance | refund' },
+        reference:  { type: 'string', description: 'UPI transaction ID or bank reference' },
+        notes:      { type: 'string', description: 'Optional note' }
+      },
+      required: ['booking_id', 'amount', 'method']
+    }
+  },
+
+  // ── Reporting tools ───────────────────────────────────────
+  {
+    name: 'get_report',
+    description: 'Revenue and dues report. Shows totals by category, payment method breakdown, bookings count, and all outstanding dues.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        from_date: { type: 'string', description: 'Start date YYYY-MM-DD. Default: start of current month.' },
+        to_date:   { type: 'string', description: 'End date YYYY-MM-DD. Default: today.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'get_transaction',
+    description: 'Get a single transaction by its ID (e.g. T001). Returns full transaction details including booking, type, amount, method, notes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        txn_id: { type: 'string', description: 'Transaction ID e.g. E001, F001, P001, X001' }
+      },
+      required: ['txn_id']
+    }
+  },
+  {
+    name: 'list_transactions',
+    description: 'List charges and payments filtered by booking, date range, type, or category.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Filter by booking ID or guest name' },
+        from_date:  { type: 'string', description: 'Filter from date YYYY-MM-DD' },
+        to_date:    { type: 'string', description: 'Filter to date YYYY-MM-DD' },
+        type:       { type: 'string', description: 'charge | payment — filter by type' },
+        category:   { type: 'string', description: 'Filter by category e.g. food, vehicle' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'get_dues',
+    description: 'List all bookings with outstanding dues, sorted by amount owed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Filter by booking status. Default: all with due > 0' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'get_occupancy',
+    description: 'Show cabin occupancy: which dates are booked, upcoming arrivals, and current guests.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        from_date: { type: 'string', description: 'Start date YYYY-MM-DD. Default: today.' },
+        to_date:   { type: 'string', description: 'End date YYYY-MM-DD. Default: 30 days from today.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'check_in_booking',
+    description: 'Mark a booking as checked in. Sets status to active and records Checked In At timestamp.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID e.g. R001 or guest name' }
+      },
+      required: ['booking_id']
+    }
+  },
+  {
+    name: 'check_out_booking',
+    description: 'Mark a booking as checked out. Sets status to checked_out and records Checked Out At timestamp.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID e.g. R001 or guest name' }
+      },
+      required: ['booking_id']
+    }
+  },
+  {
+    name: 'list_rooms',
+    description: 'List all rooms/cabins with ID, name, default rate, and status.',
+    input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'get_room',
+    description: 'Get a single room by ID.',
+    input_schema: {
+      type: 'object',
+      properties: { room_id: { type: 'string', description: 'Room ID like R001' } },
+      required: ['room_id']
+    }
+  },
+  {
+    name: 'get_guest',
+    description: 'Get a guest by ID. Returns name, phone, and booking history summary.',
+    input_schema: {
+      type: 'object',
+      properties: { guest_id: { type: 'string', description: 'Guest ID like G001' } },
+      required: ['guest_id']
+    }
+  },
+  {
+    name: 'list_guests',
+    description: 'List guests. Optional search by name or phone.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Optional — filter by name or phone' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'add_food',
+    description: 'Add a food revenue entry for a reservation. Tracks rate per person, people, stay nights, revenue, cost, profit, payee.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'Reservation ID or guest name' },
+        date: { type: 'string', description: 'Date YYYY-MM-DD' },
+        guest: { type: 'string', description: 'Guest name' },
+        stay_nights: { type: 'number', description: 'Nights for this stay' },
+        people: { type: 'number', description: 'Number of people' },
+        rate_per_person_per_day: { type: 'number', description: 'Rate in rupees' },
+        base_food_revenue: { type: 'number', description: 'Base revenue' },
+        food_cost: { type: 'number', description: 'Cost if any' },
+        special_request_charge: { type: 'number', description: 'Extra charge' },
+        payee: { type: 'string', description: 'Who received payment' },
+        notes: { type: 'string', description: 'Optional notes' }
+      },
+      required: ['booking_id', 'guest']
+    }
+  },
+  {
+    name: 'add_expense',
+    description: 'Record an operational expense. Category: Groceries | Cleaning | Staff | Utilities | Internet | Maintenance | Marketing | Transport | Supplies | Misc | Electricity.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'Date YYYY-MM-DD' },
+        category: { type: 'string', description: 'Groceries | Cleaning | Staff | Utilities | Internet | Maintenance | Marketing | Transport | Supplies | Misc | Electricity' },
+        sub_category: { type: 'string', description: 'e.g. salary, UPCL' },
+        description: { type: 'string', description: 'What the expense was for' },
+        amount: { type: 'number', description: 'Amount in rupees' },
+        paid_from: { type: 'string', description: 'e.g. Amar -> Gokul, Jyoti -> UPCL' }
+      },
+      required: ['date', 'category', 'amount']
+    }
+  },
+  {
+    name: 'get_dashboard',
+    description: 'Get dashboard metrics: total reservations, stay revenue (Net Received), Airbnb vs Direct, experience profit, food profit, total expenses, net profit. Optional date range.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        from_date: { type: 'string', description: 'Start date YYYY-MM-DD' },
+        to_date: { type: 'string', description: 'End date YYYY-MM-DD' }
+      },
+      required: []
+    }
+  }
+];
+
+var SYSTEM_PROMPT = [
+  'You are a smart, concise cabin management assistant.',
+  'Help the owner manage bookings, charges, payments, and reports.',
+  '',
+  'TOOLS AVAILABLE:',
+  '  Reservations : add_booking, edit_booking, delete_booking, list_bookings, get_booking, get_summary, check_in_booking, check_out_booking, find_guest. Booking types: Sky View Cabin, Forest View Cabin, Vaadi - Entire Villa. Sources: Airbnb, Direct, WhatsApp, Instagram.',
+  '  Experiences  : add_charge (Trek, Forest Walk, Meditation, Camping, Custom Tour, Bonfire, Cab Service, Mattress, Horse/Mule service), edit_transaction, delete_transaction',
+  '  Food         : add_food (food revenue per stay), edit_transaction',
+  '  Payments     : add_payment, edit_transaction, delete_transaction',
+  '  Expenses     : add_expense (Groceries, Cleaning, Staff, Utilities, Internet, Maintenance, Marketing, Transport, Supplies, Misc, Electricity)',
+  '  Rooms        : list_rooms, get_room. Guests: get_guest, list_guests.',
+  '  Reports      : get_report, get_transaction, list_transactions, get_dues, get_occupancy, get_dashboard',
+  '',
+  'RULES:',
+  '- Never guess a missing required parameter — ask clearly',
+  '- For delete operations always confirm with the user before calling the tool with confirm:true',
+  '- Booking type = Sky View Cabin | Forest View Cabin | Vaadi - Entire Villa. Booking source = Airbnb | Direct | WhatsApp | Instagram.',
+  '- For list_bookings: use status=reserved or status=all when user asks for upcoming, future, or reserved bookings; default shows active only.',
+  '- Map loose charge descriptions to experience types: Trek, Forest Walk, Meditation, Camping, Custom Tour, Bonfire, Cab Service, Mattress, Horse/Mule service',
+  '- Map payment descriptions to: cash/upi/bank_transfer/advance/refund',
+  '- If user says "update/fix/correct a charge or payment" use edit_transaction, not add_charge/add_payment',
+  '- If user says "wrong entry" or "mistake" offer to delete_transaction or edit_transaction',
+  '- When creating a booking from Airbnb: use booking_source=Airbnb; Final Amount = subtotal after discount (amount before tax/fee); total_discount = nightly rate adjustment; tax (5%) and airbnb_fee (15.5%) on that subtotal; net_received = host payout. Check-out must be after check-in.',
+  '- You can receive images. When the user sends a screenshot (e.g. Airbnb booking details, payout breakdown, or confirmation): look at the image and extract guest name, check-in/check-out dates, nights, confirmation code, gross amount, discount, tax, fee, net payout, booking date. Then use add_booking (or edit_booking if updating) with the extracted fields. If the image shows only partial info, ask for the rest or infer what you can.',
+  '- After every tool call reply with a short, friendly summary',
+  '- Show all amounts with the rupee symbol',
+  '- Keep replies brief — this is a quick admin tool',
+  '',
+  'Current date: ' + new Date().toLocaleDateString('en-IN', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  })
+].join('\n');
+
+// ── Web app entry: GET = JSONP (no CORS), POST = JSON body (for images / large payloads)
+function doGet(e) {
+  var callback = e.parameter.callback;
+  var payload  = e.parameter.payload;
+  var result;
+  try {
+    var body  = JSON.parse(payload);
+    var reply = runAgent(body.history || []);
+    result = JSON.stringify({ ok: true, reply: reply, model: CONFIG.model });
+  } catch(err) {
+    result = JSON.stringify({ ok: false, error: err.message });
+  }
+  return ContentService
+    .createTextOutput(callback + '(' + result + ')')
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+function doPost(e) {
+  var result;
+  try {
+    var body = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
+    var reply = runAgent(body.history || []);
+    result = { ok: true, reply: reply, model: CONFIG.model };
+  } catch(err) {
+    result = { ok: false, error: err.message };
+  }
+  return ContentService
+    .createTextOutput(JSON.stringify(result))
+    .setMimeType(ContentService.MimeType.JSON)
+    .setHeader('Access-Control-Allow-Origin', '*')
+    .setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    .setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
+// ── Claude agentic loop (supports text + image content for vision) ─
+function runAgent(history) {
+  var messages = history.map(function(h) {
+    var role = h.role === 'model' ? 'assistant' : h.role;
+    if (Array.isArray(h.content)) {
+      return { role: role, content: h.content };
+    }
+    var text = typeof h.content === 'string' ? h.content
+             : (h.parts && h.parts[0] ? h.parts[0].text || '' : '');
+    return { role: role, content: text };
+  });
+
+  for (var turn = 0; turn < 10; turn++) {
+    var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json',
+      headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({
+        model: CONFIG.model, max_tokens: CONFIG.max_tokens,
+        temperature: CONFIG.temperature, system: SYSTEM_PROMPT,
+        tools: TOOLS, messages: messages
+      }),
+      muteHttpExceptions: true
+    });
+
+    var data = JSON.parse(res.getContentText());
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+
+    if (data.stop_reason === 'end_turn') {
+      var tb = data.content.filter(function(b){ return b.type==='text'; })[0];
+      return tb ? tb.text : '(no response)';
+    }
+
+    if (data.stop_reason === 'tool_use') {
+      messages.push({ role: 'assistant', content: data.content });
+      var results = data.content
+        .filter(function(b){ return b.type==='tool_use'; })
+        .map(function(b){
+          return { type:'tool_result', tool_use_id:b.id,
+                   content: JSON.stringify(executeTool(b.name, b.input)) };
+        });
+      messages.push({ role: 'user', content: results });
+      continue;
+    }
+    throw new Error('Unexpected stop_reason: ' + data.stop_reason);
+  }
+  return 'Agent loop exceeded max turns — please try again.';
+}
+
+// ── Tool router ───────────────────────────────────────────────
+function executeTool(name, args) {
+  var fns = {
+    add_booking:        toolAddBooking,
+    edit_booking:       toolEditBooking,
+    delete_booking:     toolDeleteBooking,
+    list_bookings:      toolListBookings,
+    get_booking:        toolGetBooking,
+    get_summary:        toolGetSummary,
+    check_in_booking:   toolCheckInBooking,
+    check_out_booking:  toolCheckOutBooking,
+    find_guest:         toolFindGuest,
+    add_charge:         toolAddCharge,
+    edit_transaction:   toolEditTransaction,
+    delete_transaction: toolDeleteTransaction,
+    add_payment:        toolAddPayment,
+    get_report:         toolGetReport,
+    get_transaction:    toolGetTransaction,
+    list_transactions:  toolListTransactions,
+    get_dues:           toolGetDues,
+    get_occupancy:      toolGetOccupancy,
+    list_rooms:         toolListRooms,
+    get_room:           toolGetRoom,
+    get_guest:          toolGetGuest,
+    list_guests:        toolListGuests,
+    add_food:           toolAddFood,
+    add_expense:        toolAddExpense,
+    get_dashboard:      toolGetDashboard
+  };
+  return fns[name] ? fns[name](args) : { error: 'Unknown tool: ' + name };
+}
+
+// ── Sheet helpers ─────────────────────────────────────────────
+function getSS() { return SpreadsheetApp.openById(SHEET_ID); }
+function getGS() { return getSS().getSheetByName(SHEET_GUESTS); }
+function getRS() { return getSS().getSheetByName(SHEET_ROOMS); }
+function getRSV() { return getSS().getSheetByName(SHEET_RESERVATIONS); }
+function getES() { return getSS().getSheetByName(SHEET_EXPERIENCES); }
+function getFS() { return getSS().getSheetByName(SHEET_FOOD); }
+function getXS() { return getSS().getSheetByName(SHEET_EXPENSES); }
+function getDS() { return getSS().getSheetByName(SHEET_DASHBOARD); }
+function getPS() { return getSS().getSheetByName(SHEET_PAYMENTS); }
+function getAS() { return getSS().getSheetByName(SHEET_AUDIT); }
+function getBS() { return getRSV(); }
+function getCS() { return getES(); }
+
+function sheetToObjects(sheet) {
+  var rows = sheet.getDataRange().getValues();
+  if (rows.length <= 1) return [];
+  var h = rows[0];
+  return rows.slice(1).map(function(r){
+    var o = {}; h.forEach(function(k,i){ o[k]=r[i]; }); return o;
+  });
+}
+
+function objectsToRows(sheet, objects) {
+  var headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  return objects.map(function(o){ return headers.map(function(h){ return o[h]!==undefined?o[h]:''; }); });
+}
+
+function findBooking(ref) {
+  var n = ref.toString().trim().toUpperCase();
+  var row = sheetToObjects(getRSV()).filter(function(r){
+    return (r['Reservation ID'] && r['Reservation ID'].toString().toUpperCase()===n) ||
+           (r['Guest Name'] && r['Guest Name'].toString().toLowerCase().indexOf(n.toLowerCase())!==-1);
+  })[0];
+  if (row) { row['Booking ID'] = row['Reservation ID']; }
+  return row;
+}
+
+function findTxn(txnId) {
+  var n = (txnId + '').trim().toUpperCase();
+  if (n.indexOf('E')===0) {
+    var e = sheetToObjects(getES()).filter(function(r){ return r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n; })[0];
+    if (e) { e._sheet = 'charge'; e.Type = 'charge'; e['Booking ID'] = e['Reservation ID']; return e; }
+  }
+  if (n.indexOf('F')===0) {
+    var f = sheetToObjects(getFS()).filter(function(r){ return r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n; })[0];
+    if (f) { f._sheet = 'charge'; f.Type = 'charge'; f['Booking ID'] = f['Reservation ID']; return f; }
+  }
+  if (n.indexOf('P')===0) {
+    var p = sheetToObjects(getPS()).filter(function(r){ return r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n; })[0];
+    if (p) { p._sheet = 'payment'; p.Type = 'payment'; p.Category = 'payment'; p['Booking ID'] = p['Reservation ID']; return p; }
+  }
+  if (n.indexOf('X')===0) {
+    var x = sheetToObjects(getXS()).filter(function(r){ return r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n; })[0];
+    if (x) { x._sheet = 'expense'; x.Type = 'expense'; return x; }
+  }
+  var e2 = sheetToObjects(getES()).filter(function(r){ return r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n; })[0];
+  if (e2) { e2._sheet = 'charge'; e2.Type = 'charge'; e2['Booking ID'] = e2['Reservation ID']; return e2; }
+  var p2 = sheetToObjects(getPS()).filter(function(r){ return r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n; })[0];
+  if (p2) { p2._sheet = 'payment'; p2.Type = 'payment'; p2.Category = 'payment'; p2['Booking ID'] = p2['Reservation ID']; return p2; }
+  return null;
+}
+
+function getOrCreateGuest(name, phone) {
+  var data = sheetToObjects(getGS());
+  var n = (name + '').trim().toLowerCase();
+  var p = (phone + '').trim();
+  var existing = data.filter(function(r){
+    return (r['Name'] && r['Name'].toString().toLowerCase().indexOf(n)!==-1) ||
+           (r['Phone'] && r['Phone'].toString().indexOf(p)!==-1);
+  })[0];
+  if (existing) {
+    updateGuestLastUsed(existing['Guest ID']);
+    return existing['Guest ID'];
+  }
+  var id = nextId(getGS(), 'Guest ID', 'G');
+  getGS().appendRow([id, name, phone || '', '', '', now(), now()]);
+  auditLog('system', 'guest_created', 'guest', id, JSON.stringify({ name: name, phone: phone }));
+  return id;
+}
+
+function updateGuestLastUsed(guestId) {
+  var sheet = getGS();
+  var data = sheetToObjects(sheet);
+  var headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  var idx = -1;
+  data.forEach(function(r,i){ if(r['Guest ID'] && r['Guest ID'].toString().toUpperCase()===guestId.toString().toUpperCase()) idx=i; });
+  if (idx!==-1) {
+    var col = headers.indexOf('Last Used At')+1;
+    if (col>0) sheet.getRange(idx+2, col).setValue(now());
+  }
+}
+
+function getGuestById(guestId) {
+  var n = (guestId + '').trim().toUpperCase();
+  return sheetToObjects(getGS()).filter(function(r){ return r['Guest ID'] && r['Guest ID'].toString().toUpperCase()===n; })[0];
+}
+
+function getRoomById(roomId) {
+  var n = (roomId + '').trim().toUpperCase();
+  return sheetToObjects(getRS()).filter(function(r){ return r['Room ID'] && r['Room ID'].toString().toUpperCase()===n; })[0];
+}
+
+function auditLog(actor, action, entityType, entityId, details) {
+  getAS().appendRow([now(), actor || 'system', action, entityType || '', entityId || '', details || '']);
+}
+
+function updateBookingRow(bookingId, updates) {
+  var sheet   = getRSV();
+  var data    = sheetToObjects(sheet);
+  var headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  var idx = -1;
+  var id = (bookingId || '').toString().toUpperCase();
+  data.forEach(function(r,i){ if((r['Reservation ID']||r['Booking ID']).toString().toUpperCase()===id) idx=i; });
+  if (idx===-1) return false;
+  updates['Last Updated'] = now();
+  var rn = idx+2;
+  Object.keys(updates).forEach(function(k){
+    var c = headers.indexOf(k)+1;
+    if (c>0) sheet.getRange(rn,c).setValue(updates[k]);
+  });
+  return true;
+}
+
+function deleteRow(sheet, colName, value) {
+  var data = sheetToObjects(sheet);
+  var v    = value.toString().toUpperCase();
+  var idx  = -1;
+  data.forEach(function(r,i){ if(r[colName].toString().toUpperCase()===v) idx=i; });
+  if (idx===-1) return false;
+  sheet.deleteRow(idx+2);
+  return true;
+}
+
+function nextId(sheet, col, prefix) {
+  var data = sheetToObjects(sheet);
+  if (!data.length) return prefix+'001';
+  var nums = data.map(function(r){ return parseInt(r[col].toString().replace(/\D/g,''))||0; });
+  return prefix + String(Math.max.apply(null,nums)+1).padStart(3,'0');
+}
+
+function parseDate(s) {
+  if (!s) return '';
+  var d = new Date(s);
+  return isNaN(d) ? s : d.toLocaleDateString('en-IN');
+}
+
+function toDate(s) {
+  if (!s) return null;
+  var d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+function nightsBetween(a,b) {
+  var d1=new Date(a), d2=new Date(b);
+  return (isNaN(d1)||isNaN(d2)) ? 1 : Math.max(1,Math.round((d2-d1)/86400000));
+}
+
+function now() { return new Date().toLocaleString('en-IN'); }
+function today() { return new Date().toLocaleDateString('en-IN'); }
+
+function normaliseBookingSource(raw) {
+  if (!raw) return 'Direct';
+  var r = raw.toString().toLowerCase().trim();
+  if (r.indexOf('airbnb') !== -1) return 'Airbnb';
+  if (r.indexOf('whatsapp') !== -1 || r.indexOf('whats app') !== -1) return 'WhatsApp';
+  if (r.indexOf('instagram') !== -1 || r.indexOf('insta') !== -1) return 'Instagram';
+  if (r.indexOf('direct') !== -1) return 'Direct';
+  for (var i = 0; i < BOOKING_SOURCES.length; i++) {
+    if (BOOKING_SOURCES[i].toLowerCase() === r) return BOOKING_SOURCES[i];
+  }
+  return 'Direct';
+}
+
+function normaliseExperienceType(raw) {
+  if (!raw) return 'Custom Tour';
+  var r = raw.toString().toLowerCase().trim();
+  for (var i = 0; i < EXPERIENCE_TYPES.length; i++) {
+    if (EXPERIENCE_TYPES[i].toLowerCase() === r) return EXPERIENCE_TYPES[i];
+  }
+  var map = {
+    'Trek': ['trek', 'trekking', 'hike', 'hiking', 'trail'],
+    'Forest Walk': ['forest', 'walk', 'nature walk'],
+    'Meditation': ['meditation', 'meditate', 'yoga'],
+    'Camping': ['camping', 'camp', 'tent'],
+    'Custom Tour': ['custom', 'tour', 'activity', 'adventure', 'rafting', 'paraglid', 'kayak', 'zipline'],
+    'Bonfire': ['bonfire', 'fire', 'campfire'],
+    'Cab Service': ['cab', 'taxi', 'car', 'vehicle', 'transport', 'drop', 'pickup', 'auto', 'jeep'],
+    'Mattress': ['mattress', 'extra bed', 'bed'],
+    'Horse/Mule service': ['horse', 'mule', 'pony', 'riding']
+  };
+  for (var label in map) {
+    if (map[label].some(function(k) { return r.indexOf(k) !== -1; })) return label;
+  }
+  return 'Custom Tour';
+}
+
+function normaliseExpenseCategory(raw) {
+  if (!raw) return 'Misc';
+  var r = raw.toString().toLowerCase().trim();
+  for (var i = 0; i < EXPENSE_CATEGORIES.length; i++) {
+    if (EXPENSE_CATEGORIES[i].toLowerCase() === r) return EXPENSE_CATEGORIES[i];
+  }
+  var map = {
+    'Groceries': ['grocery', 'groceries', 'food', 'vegetables', 'produce'],
+    'Cleaning': ['cleaning', 'clean', 'housekeep'],
+    'Staff': ['staff', 'salary', 'wage', 'labour', 'labor'],
+    'Utilities': ['utilities', 'utility', 'online shopping', 'amazon', 'bill'],
+    'Internet': ['internet', 'wifi', 'jio', 'airtel', 'broadband'],
+    'Maintenance': ['maintenance', 'repair', 'tiles', 'plumb', 'paint'],
+    'Marketing': ['marketing', 'promo', 'advert', 'social'],
+    'Transport': ['transport', 'fuel', 'petrol', 'diesel', 'travel'],
+    'Supplies': ['supplies', 'supply', 'consumables'],
+    'Misc': ['misc', 'other', 'miscellaneous', 'sundry'],
+    'Electricity': ['electricity', 'electric', 'upcl', 'power', 'meter']
+  };
+  for (var label in map) {
+    if (map[label].some(function(k) { return r.indexOf(k) !== -1; })) return label;
+  }
+  return 'Misc';
+}
+
+function normaliseMethod(raw) {
+  if (!raw) return 'cash';
+  var r = raw.toString().toLowerCase();
+  if (/upi|gpay|phonepe|paytm|bhim/.test(r)) return 'upi';
+  if (/bank|neft|imps|rtgs|transfer/.test(r)) return 'bank_transfer';
+  if (/advance|token|deposit/.test(r)) return 'advance';
+  if (/refund|return|back/.test(r)) return 'refund';
+  return 'cash';
+}
+
+// ── Recalculate (no-op for new Reservations model; kept for compatibility) ─
+function recalcBooking(bookingId) {
+  var booking = findBooking(bookingId);
+  if (!booking) return null;
+  var finalAmt = Number(booking['Final Amount']) || 0;
+  var netRecv  = Number(booking['Net Received']) || 0;
+  return { base: finalAmt, extra: 0, grand: finalAmt, paid: netRecv, due: Math.max(0, finalAmt - netRecv) };
+}
+
+function updateExperienceRow(txnId, updates) {
+  var sheet = getES();
+  var data = sheetToObjects(sheet);
+  var headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  var idx = -1, n = (txnId + '').trim().toUpperCase();
+  data.forEach(function(r,i){ if(r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n) idx=i; });
+  if (idx===-1) return false;
+  var rn = idx+2;
+  Object.keys(updates).forEach(function(k){ var c = headers.indexOf(k)+1; if (c>0) sheet.getRange(rn,c).setValue(updates[k]); });
+  return true;
+}
+
+function updateChargeRow(txnId, updates) {
+  var n = (txnId + '').trim().toUpperCase();
+  if (n.indexOf('E')===0) return updateExperienceRow(txnId, updates);
+  if (n.indexOf('F')===0) return updateFoodRow(txnId, updates);
+  return false;
+}
+
+function updateFoodRow(txnId, updates) {
+  var sheet = getFS();
+  var data = sheetToObjects(sheet);
+  var headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  var idx = -1, n = (txnId + '').trim().toUpperCase();
+  data.forEach(function(r,i){ if(r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n) idx=i; });
+  if (idx===-1) return false;
+  var rn = idx+2;
+  Object.keys(updates).forEach(function(k){ var c = headers.indexOf(k)+1; if (c>0) sheet.getRange(rn,c).setValue(updates[k]); });
+  return true;
+}
+
+function updatePaymentRow(txnId, updates) {
+  var sheet = getPS();
+  var data = sheetToObjects(sheet);
+  var headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  var idx = -1;
+  var n = (txnId + '').trim().toUpperCase();
+  data.forEach(function(r,i){ if(r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n) idx=i; });
+  if (idx===-1) return false;
+  var rn = idx+2;
+  Object.keys(updates).forEach(function(k){
+    var c = headers.indexOf(k)+1;
+    if (c>0) sheet.getRange(rn,c).setValue(updates[k]);
+  });
+  return true;
+}
+
+function updateExpenseRow(txnId, updates) {
+  var sheet = getXS();
+  var data = sheetToObjects(sheet);
+  var headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  var idx = -1, n = (txnId + '').trim().toUpperCase();
+  data.forEach(function(r,i){ if(r['Txn ID'] && r['Txn ID'].toString().toUpperCase()===n) idx=i; });
+  if (idx===-1) return false;
+  var rn = idx+2;
+  Object.keys(updates).forEach(function(k){ var c = headers.indexOf(k)+1; if (c>0) sheet.getRange(rn,c).setValue(updates[k]); });
+  return true;
+}
+
+function deleteExperienceRow(txnId) { return deleteRow(getES(), 'Txn ID', txnId); }
+function deleteFoodRow(txnId) { return deleteRow(getFS(), 'Txn ID', txnId); }
+function deletePaymentRow(txnId) { return deleteRow(getPS(), 'Txn ID', txnId); }
+function deleteExpenseRow(txnId) { return deleteRow(getXS(), 'Txn ID', txnId); }
+
+function deleteChargeRow(txnId) {
+  var n = (txnId + '').trim().toUpperCase();
+  if (n.indexOf('E')===0) return deleteExperienceRow(txnId);
+  if (n.indexOf('F')===0) return deleteFoodRow(txnId);
+  return false;
+}
+
+function nextChargeId() { return nextId(getES(), 'Txn ID', 'E'); }
+function nextPaymentId() { return nextId(getPS(), 'Txn ID', 'P'); }
+function nextFoodId() { return nextId(getFS(), 'Txn ID', 'F'); }
+function nextExpenseId() { return nextId(getXS(), 'Txn ID', 'X'); }
+
+// ── Tool implementations ──────────────────────────────────────
+
+function toolAddBooking(a) {
+  var d1 = toDate(a.check_in);
+  var d2 = toDate(a.check_out);
+  if (d1 && d2 && d2 <= d1) return { error: 'Check-out date must be after check-in date. Please correct the dates.' };
+  var guestId = getOrCreateGuest(a.guest_name, a.phone || '');
+  var sheet   = getRSV();
+  var id     = nextId(sheet, 'Reservation ID', 'R');
+  var nights = nightsBetween(a.check_in, a.check_out);
+  var bookingType = a.booking_type || 'Forest View Cabin';
+  var bookingSource = normaliseBookingSource(a.booking_source || 'Direct');
+  var source = bookingSource.toLowerCase();
+  var pricePerNight = Number(a.price_per_night) || 0;
+  var discount = Number(a.total_discount) || 0;
+  // Final Amount = (price/night × nights) - discount (or use provided final_amount)
+  var finalAmount = a.final_amount != null ? Number(a.final_amount) : Math.round(pricePerNight * nights - discount);
+  finalAmount = Math.max(0, finalAmount);
+  // Tax 5% and Airbnb fee 15.5% when source is Airbnb; otherwise 0
+  var tax = 0, airbnbFee = 0, netReceived = 0;
+  if (a.tax != null && a.airbnb_fee != null && a.net_received != null) {
+    tax = Number(a.tax) || 0;
+    airbnbFee = Number(a.airbnb_fee) || 0;
+    netReceived = Number(a.net_received) || 0;
+  } else if (source.indexOf('airbnb') !== -1) {
+    tax = Math.round(finalAmount * 0.05);
+    airbnbFee = Math.round(finalAmount * 0.155);
+    netReceived = a.net_received != null ? Number(a.net_received) : (finalAmount - tax - airbnbFee);
+  } else {
+    netReceived = a.net_received != null ? Number(a.net_received) : finalAmount;
+  }
+  netReceived = Math.max(0, netReceived);
+  sheet.appendRow([
+    id, guestId, a.guest_name, parseDate(a.check_in), bookingType, nights, bookingSource,
+    pricePerNight, discount, finalAmount, tax, airbnbFee, netReceived,
+    a.payout_date || '', parseDate(a.booking_date || a.check_in), Number(a.tip) || 0, a.payee || '',
+    'reserved', a.notes || '', now(), now()
+  ]);
+  auditLog('system', 'reservation_created', 'reservation', id, JSON.stringify({ guest: a.guest_name, nights: nights, final_amount: finalAmount, tax: tax, airbnb_fee: airbnbFee, net_received: netReceived }));
+  return { success: true, booking_id: id, reservation_id: id, guest: a.guest_name, guest_id: guestId, booking_type: bookingType, nights: nights, final_amount: finalAmount, tax: tax, airbnb_fee: airbnbFee, net_received: netReceived };
+}
+
+function toolEditBooking(a) {
+  var booking = findBooking(a.booking_id);
+  if (!booking) return { error:'Booking "'+a.booking_id+'" not found.' };
+
+  var updates = {};
+  if (a.guest_name) updates['Guest Name'] = a.guest_name;
+  if (a.status) updates['Status'] = a.status;
+  if (a.notes) updates['Notes'] = a.notes;
+  if (a.check_in) updates['Check-in'] = parseDate(a.check_in);
+  if (a.booking_type) updates['Booking Type'] = a.booking_type;
+  if (a.nights != null) updates['Nights'] = Math.max(1, Number(a.nights));
+  if (a.booking_source) updates['Booking Source'] = normaliseBookingSource(a.booking_source);
+  if (a.display_price_per_night != null) updates['Display Price/Night'] = a.display_price_per_night;
+  if (a.total_discount != null) updates['Total Discount'] = a.total_discount;
+  if (a.final_amount != null) updates['Final Amount'] = a.final_amount;
+  if (a.tax != null) updates['Tax (5%)'] = a.tax;
+  if (a.airbnb_fee != null) updates['Airbnb Fee'] = a.airbnb_fee;
+  if (a.net_received != null) updates['Net Received'] = a.net_received;
+  if (a.payout_date != null) updates['Payout Date'] = a.payout_date;
+  if (a.booking_date != null) updates['Booking Date'] = parseDate(a.booking_date);
+  if (a.tip != null) updates['Tip'] = a.tip;
+  if (a.payee != null) updates['Payee'] = a.payee;
+
+  // When discount, price per night, or nights change: recompute Final Amount = (price × nights) - discount
+  var pricePerNight = a.display_price_per_night != null ? Number(a.display_price_per_night) : (Number(booking['Display Price/Night']) || 0);
+  var nights = a.nights != null ? Math.max(1, Number(a.nights)) : Math.max(1, Number(booking['Nights']) || 1);
+  var totalDiscount = a.total_discount != null ? Number(a.total_discount) : (Number(booking['Total Discount']) || 0);
+  if (a.total_discount != null || a.display_price_per_night != null || a.nights != null) {
+    var derivedFinal = Math.max(0, Math.round(pricePerNight * nights - totalDiscount));
+    updates['Final Amount'] = derivedFinal;
+  }
+
+  // Recalc tax (5%) and Airbnb fee (15.5%) when final_amount or booking_source changes
+  var finalAmt = updates['Final Amount'] != null ? Number(updates['Final Amount']) : (a.final_amount != null ? Number(a.final_amount) : (Number(booking['Final Amount']) || 0));
+  var src = (a.booking_source || booking['Booking Source'] || '').toString().toLowerCase();
+  if (src.indexOf('airbnb') !== -1 && (updates['Final Amount'] != null || a.final_amount != null || a.booking_source != null || a.total_discount != null || a.display_price_per_night != null || a.nights != null)) {
+    if (a.tax == null) { var taxVal = Math.round(finalAmt * 0.05); updates['Tax (5%)'] = taxVal; }
+    if (a.airbnb_fee == null) { var feeVal = Math.round(finalAmt * 0.155); updates['Airbnb Fee'] = feeVal; }
+    if (a.net_received == null) {
+      var tax = updates['Tax (5%)'] != null ? updates['Tax (5%)'] : (Number(booking['Tax (5%)']) || 0);
+      var fee = updates['Airbnb Fee'] != null ? updates['Airbnb Fee'] : (Number(booking['Airbnb Fee']) || 0);
+      updates['Net Received'] = Math.max(0, finalAmt - tax - fee);
+    }
+  } else if ((src.indexOf('direct') !== -1 || src.indexOf('whatsapp') !== -1 || src.indexOf('instagram') !== -1) && (a.booking_source != null || updates['Final Amount'] != null)) {
+    if (a.tax == null) updates['Tax (5%)'] = 0;
+    if (a.airbnb_fee == null) updates['Airbnb Fee'] = 0;
+    if (a.net_received == null) updates['Net Received'] = finalAmt;
+  }
+
+  if (Object.keys(updates).length === 0) return { error: 'Nothing to update — provide at least one field.' };
+  updateBookingRow(booking['Reservation ID'], updates);
+  return { success: true, booking_id: booking['Reservation ID'], guest: booking['Guest Name'], updated: updates };
+}
+
+function toolDeleteBooking(a) {
+  if (!a.confirm) return { error:'Please confirm deletion — this removes the booking and all its transactions.' };
+  var booking = findBooking(a.booking_id);
+  if (!booking) return { error:'Booking "'+a.booking_id+'" not found.' };
+  var bid = booking['Booking ID'].toString().toUpperCase();
+
+  function deleteRowsForReservation(sheet, colName) {
+    var data = sheetToObjects(sheet);
+    for (var i = data.length - 1; i >= 0; i--) {
+      if (data[i][colName] && data[i][colName].toString().toUpperCase() === bid) sheet.deleteRow(i + 2);
+    }
+  }
+  deleteRowsForReservation(getES(), 'Reservation ID');
+  deleteRowsForReservation(getFS(), 'Reservation ID');
+  deleteRowsForReservation(getPS(), 'Reservation ID');
+  deleteRow(getRSV(), 'Reservation ID', booking['Reservation ID']);
+  auditLog('system', 'booking_deleted', 'booking', booking['Booking ID'], JSON.stringify({ guest: booking['Guest Name'] }));
+  return { success:true, deleted_booking:booking['Booking ID'], guest:booking['Guest Name'],
+           message:'Booking and all its charges and payments deleted.' };
+}
+
+function toolGetBooking(a) {
+  var r = findBooking(a.booking_id);
+  if (!r) return { error: 'Booking "' + a.booking_id + '" not found.' };
+  var due = Math.max(0, (Number(r['Final Amount'])||0) - (Number(r['Net Received'])||0));
+  return { success: true,
+    booking: {
+      id: r['Reservation ID'], guest_id: r['Guest ID'], guest: r['Guest Name'],
+      check_in: r['Check-in'], booking_type: r['Booking Type'], nights: r['Nights'],
+      booking_source: r['Booking Source'], display_price_per_night: r['Display Price/Night'],
+      total_discount: r['Total Discount'], final_amount: r['Final Amount'],
+      tax: r['Tax (5%)'], airbnb_fee: r['Airbnb Fee'], net_received: r['Net Received'],
+      payout_date: r['Payout Date'], booking_date: r['Booking Date'], tip: r['Tip'], payee: r['Payee'],
+      status: r['Status'], notes: r['Notes'], created_on: r['Created On'], last_updated: r['Last Updated'],
+      due: due
+    }
+  };
+}
+
+function toolListBookings(a) {
+  var data   = sheetToObjects(getRSV());
+  var status = ((a.status||'active')+'').toLowerCase();
+  var list   = status==='all' ? data : data.filter(function(r){
+    return (r['Status']||'').toString().toLowerCase()===status;
+  });
+  if (a.from_date) { var f = toDate(a.from_date); if (f) list = list.filter(function(r){ return toDate(r['Check-in'])>=f; }); }
+  if (a.to_date) { var t = toDate(a.to_date); if (t) list = list.filter(function(r){ return toDate(r['Check-in'])<=t; }); }
+  return { success: true, count: list.length,
+    bookings: list.map(function(r){
+      var due = Math.max(0, (Number(r['Final Amount'])||0) - (Number(r['Net Received'])||0));
+      return { id: r['Reservation ID'], guest: r['Guest Name'], check_in: r['Check-in'], booking_type: r['Booking Type'],
+               nights: r['Nights'], total: r['Final Amount'], paid: r['Net Received'], due: due, status: r['Status'] };
+    })};
+}
+
+function toolGetSummary(a) {
+  var r = findBooking(a.booking_id);
+  if (!r) return { error:'Booking "'+a.booking_id+'" not found.' };
+  var bid = (r['Reservation ID']||r['Booking ID']).toString().toUpperCase();
+  var experiences = sheetToObjects(getES()).filter(function(t){ return (t['Reservation ID']||'').toString().toUpperCase()===bid; });
+  var food = sheetToObjects(getFS()).filter(function(t){ return (t['Reservation ID']||'').toString().toUpperCase()===bid; });
+  var payments = sheetToObjects(getPS()).filter(function(t){ return (t['Reservation ID']||'').toString().toUpperCase()===bid; });
+  var due = Math.max(0, (Number(r['Final Amount'])||0) - (Number(r['Net Received'])||0));
+  return { success: true,
+    booking: {
+      id: r['Reservation ID'], guest: r['Guest Name'], guest_id: r['Guest ID'],
+      check_in: r['Check-in'], booking_type: r['Booking Type'], nights: r['Nights'],
+      final_amount: r['Final Amount'], net_received: r['Net Received'], due: due, status: r['Status'], notes: r['Notes']
+    },
+    experiences: experiences.map(function(t){ return { txn_id: t['Txn ID'], date: t['Date'], type: t['Experience Type'], amount: t['Total Amount'], cost: t['Cost'], profit: t['Net Profit'], notes: t['Notes'] }; }),
+    food: food.map(function(t){ return { txn_id: t['Txn ID'], date: t['Date'], guest: t['Guest'], total_revenue: t['Total Food Revenue'], profit: t['Food Profit'], payee: t['Payee'] }; }),
+    payments: payments.map(function(t){ return { txn_id: t['Txn ID'], date: t['Date'], method: t['Method'], amount: t['Amount'], reference: t['Reference'], payee: t['Payee'] }; })
+  };
+}
+
+function toolFindGuest(a) {
+  var q = a.query.toString().toLowerCase();
+  var data = sheetToObjects(getRSV()).filter(function(r){
+    return (r['Guest Name']||'').toString().toLowerCase().indexOf(q)!==-1;
+  });
+  var guestIds = {};
+  data.forEach(function(r){ if(r['Guest ID']) guestIds[r['Guest ID']]=true; });
+  var guests = sheetToObjects(getGS()).filter(function(g){ return guestIds[g['Guest ID']]; });
+  return { success: true, count: data.length,
+    results: data.map(function(r){
+      var due = Math.max(0, (Number(r['Final Amount'])||0) - (Number(r['Net Received'])||0));
+      return { id: r['Reservation ID'], guest: r['Guest Name'], check_in: r['Check-in'], booking_type: r['Booking Type'],
+               nights: r['Nights'], due: due, status: r['Status'] };
+    }), guests: guests.map(function(g){ return { id: g['Guest ID'], name: g['Name'], phone: g['Phone'] }; }) };
+}
+
+function toolAddCharge(a) {
+  var booking = findBooking(a.booking_id);
+  if (!booking) return { error:'Booking "'+a.booking_id+'" not found.' };
+  var category = normaliseExperienceType(a.category);
+  var people = Number(a.no_of_people) || 1;
+  var pricePerPerson = Number(a.price_per_person) || 0;
+  var cost = Number(a.cost) || 0;
+  // Total Amount: from amount, or price_per_person × no_of_people
+  var totalAmount = Number(a.amount) || (pricePerPerson * people);
+  var netProfit = totalAmount - cost;
+  var txnId = nextChargeId();
+  getES().appendRow([
+    txnId, booking['Reservation ID'], today(), booking['Guest Name'] || '', category,
+    people, pricePerPerson, totalAmount, cost, netProfit,
+    a.payment_mode || 'cash', a.notes || '', now()
+  ]);
+  auditLog('system', 'experience_added', 'experience', txnId, JSON.stringify({ reservation_id: booking['Reservation ID'], category: category, total: totalAmount, cost: cost, profit: netProfit }));
+  var tot = recalcBooking(booking['Reservation ID']);
+  return { success: true, txn_id: txnId, booking_id: booking['Reservation ID'], category: category, total_amount: totalAmount, cost: cost, net_profit: netProfit, new_due: tot ? tot.due : 0 };
+}
+
+function toolEditTransaction(a) {
+  var txn = findTxn(a.txn_id);
+  if (!txn) return { error:'Transaction "'+a.txn_id+'" not found.' };
+
+  var updates = {};
+  if (txn._sheet === 'charge') {
+    if (a.category) updates['Experience Type'] = normaliseExperienceType(a.category);
+    if (a.amount != null) { updates['Total Amount'] = Number(a.amount)||0; updates['Net Profit'] = (Number(a.amount)||0) - (Number(txn['Cost'])||0); }
+    if (a.notes) updates['Notes'] = a.notes;
+    if (Object.keys(updates).length===0) return { error:'Nothing to update.' };
+    updateChargeRow(txn['Txn ID'], updates);
+  } else if (txn._sheet === 'payment') {
+    if (a.amount != null) updates['Amount'] = Number(a.amount)||0;
+    if (a.method) updates['Method'] = normaliseMethod(a.method);
+    if (a.reference) updates['Reference'] = a.reference;
+    if (a.notes) updates['Notes'] = a.notes;
+    if (Object.keys(updates).length===0) return { error:'Nothing to update.' };
+    updatePaymentRow(txn['Txn ID'], updates);
+  } else if (txn._sheet === 'expense') {
+    if (a.amount != null) updates['Amount'] = Number(a.amount)||0;
+    if (a.category) updates['Category'] = normaliseExpenseCategory(a.category);
+    if (a.notes) updates['Description'] = a.notes;
+    if (Object.keys(updates).length===0) return { error:'Nothing to update.' };
+    updateExpenseRow(txn['Txn ID'], updates);
+  }
+  auditLog('system', 'transaction_updated', txn._sheet, txn['Txn ID'], JSON.stringify(updates));
+  var bid = txn['Booking ID'] || txn['Reservation ID'];
+  var tot = bid ? recalcBooking(bid) : null;
+  return { success: true, txn_id: txn['Txn ID'], booking_id: bid, updated: updates, new_due: tot ? tot.due : null };
+}
+
+function toolDeleteTransaction(a) {
+  if (!a.confirm) return { error:'Please confirm — this will delete the transaction and update booking totals.' };
+  var txn = findTxn(a.txn_id);
+  if (!txn) return { error:'Transaction "'+a.txn_id+'" not found.' };
+  var bid = txn['Booking ID'] || txn['Reservation ID'];
+  if (txn._sheet === 'charge') deleteChargeRow(txn['Txn ID']);
+  else if (txn._sheet === 'payment') deletePaymentRow(txn['Txn ID']);
+  else if (txn._sheet === 'expense') deleteExpenseRow(txn['Txn ID']);
+  auditLog('system', 'transaction_deleted', txn._sheet, txn['Txn ID'], JSON.stringify({ reservation_id: bid }));
+  var totals = recalcBooking(bid);
+  return { success:true, deleted:txn['Txn ID'], booking_id:bid,
+           new_grand:totals.grand, new_due:totals.due };
+}
+
+function toolGetTransaction(a) {
+  var txn = findTxn(a.txn_id);
+  if (!txn) return { error: 'Transaction "' + a.txn_id + '" not found.' };
+  var bid = txn['Booking ID'] || txn['Reservation ID'];
+  var booking = bid ? findBooking(bid) : null;
+  var guestName = booking ? booking['Guest Name'] : (txn['Guest Name'] || txn['Guest'] || '');
+  var out = { id: txn['Txn ID'], booking_id: bid, guest: guestName, date: txn['Date'], type: txn.Type || txn._sheet || txn['Type'], amount: txn['Total Amount'] || txn['Amount'], notes: txn['Notes'] };
+  if (txn._sheet === 'charge') out.experience_type = txn['Experience Type']; else if (txn._sheet === 'payment') { out.method = txn['Method']; out.reference = txn['Reference']; out.payee = txn['Payee']; } else if (txn._sheet === 'expense') { out.category = txn['Category']; out.paid_from = txn['Paid From']; }
+  return { success: true, transaction: out };
+}
+
+function toolAddPayment(a) {
+  var booking = findBooking(a.booking_id);
+  if (!booking) return { error:'Booking "'+a.booking_id+'" not found.' };
+  var amount = Number(a.amount)||0;
+  var method = normaliseMethod(a.method);
+  var finalAmt = Number(booking['Final Amount']) || 0;
+  var netRecv  = Number(booking['Net Received']) || 0;
+  var due      = Math.max(0, finalAmt - netRecv);
+
+  if (method !== 'refund' && amount > due + 1) {
+    return { error:'Payment Rs.'+amount+' exceeds due Rs.'+due+'. Please check.' };
+  }
+
+  var txnId = nextPaymentId();
+  getPS().appendRow([txnId, booking['Reservation ID'], today(), amount, method, a.reference||'', a.payee||'', a.notes||'', now()]);
+  // Update reservation Net Received so due reflects the new payment
+  var newNetReceived = method === 'refund' ? Math.max(0, netRecv - amount) : (netRecv + amount);
+  updateBookingRow(booking['Reservation ID'], { 'Net Received': newNetReceived });
+  auditLog('system', 'payment_added', 'payment', txnId, JSON.stringify({ reservation_id: booking['Reservation ID'], method: method, amount: amount }));
+  var tot = recalcBooking(booking['Reservation ID']);
+  return { success: true, txn_id: txnId, booking_id: booking['Reservation ID'], method: method,
+           amount_recorded: amount, total_paid: tot ? tot.paid : 0, remaining_due: tot ? tot.due : 0, fully_paid: tot ? tot.due===0 : false };
+}
+
+function toolGetReport(a) {
+  var n = new Date();
+  var from = toDate(a.from_date) || new Date(n.getFullYear(), n.getMonth(), 1);
+  var to = toDate(a.to_date) || n;
+  to.setHours(23, 59, 59);
+
+  var reservations = sheetToObjects(getRSV()).filter(function(b){ var d = toDate(b['Check-in']); return d && d>=from && d<=to; });
+  var experiences = sheetToObjects(getES()).filter(function(t){ var d = toDate(t['Date']); return d && d>=from && d<=to; });
+  var food = sheetToObjects(getFS()).filter(function(t){ var d = toDate(t['Date']); return d && d>=from && d<=to; });
+  var expenses = sheetToObjects(getXS()).filter(function(t){ var d = toDate(t['Date']); return d && d>=from && d<=to; });
+
+  var stayRevenue = reservations.reduce(function(s,b){ return s+(Number(b['Net Received'])||0); }, 0);
+  var airbnbRevenue = reservations.filter(function(b){ return (b['Booking Source']||'').toLowerCase().indexOf('airbnb')!==-1; }).reduce(function(s,b){ return s+(Number(b['Net Received'])||0); }, 0);
+  var directRevenue = reservations.filter(function(b){ return (b['Booking Source']||'').toLowerCase().indexOf('airbnb')===-1; }).reduce(function(s,b){ return s+(Number(b['Net Received'])||0); }, 0);
+  var experienceProfit = experiences.reduce(function(s,t){ return s+(Number(t['Net Profit'])||0); }, 0);
+  var foodProfit = food.reduce(function(s,t){ return s+(Number(t['Food Profit'])||0); }, 0);
+  var totalExpenses = expenses.reduce(function(s,t){ return s+(Number(t['Amount'])||0); }, 0);
+
+  var byCategory = {};
+  experiences.forEach(function(t){ var c=t['Experience Type']||'other'; byCategory[c]=(byCategory[c]||0)+(Number(t['Net Profit'])||0); });
+  var expenseByCat = {};
+  expenses.forEach(function(t){ var c=t['Category']||'other'; expenseByCat[c]=(expenseByCat[c]||0)+(Number(t['Amount'])||0); });
+
+  var owing = sheetToObjects(getRSV()).filter(function(b){ return (Number(b['Final Amount'])||0) - (Number(b['Net Received'])||0) > 0; });
+
+  return {
+    success: true,
+    period: { from: from.toLocaleDateString('en-IN'), to: to.toLocaleDateString('en-IN') },
+    reservations_in_period: reservations.length,
+    stay_revenue_net: stayRevenue,
+    airbnb_revenue: airbnbRevenue,
+    direct_revenue: directRevenue,
+    experience_profit: experienceProfit,
+    food_profit: foodProfit,
+    total_expenses: totalExpenses,
+    net_profit: stayRevenue + experienceProfit + foodProfit - totalExpenses,
+    by_experience_type: byCategory,
+    by_expense_category: expenseByCat,
+    total_outstanding: owing.reduce(function(s,b){ return s + Math.max(0, (Number(b['Final Amount'])||0) - (Number(b['Net Received'])||0)); }, 0),
+    reservations_with_dues: owing.length
+  };
+}
+
+function toolListTransactions(a) {
+  var experiences = sheetToObjects(getES()).map(function(t){ t._type='experience'; t.booking_id=t['Reservation ID']; return t; });
+  var foodRows = sheetToObjects(getFS()).map(function(t){ t._type='food'; t.booking_id=t['Reservation ID']; t.Category=''; return t; });
+  var payments = sheetToObjects(getPS()).map(function(t){ t._type='payment'; t.booking_id=t['Reservation ID']; t.Category=''; return t; });
+  var result = experiences.concat(foodRows).concat(payments);
+
+  if (a.booking_id) {
+    var b = findBooking(a.booking_id);
+    var bid = b ? (b['Reservation ID']||b['Booking ID']).toString().toUpperCase() : (a.booking_id+'').toUpperCase();
+    result = result.filter(function(t){ return (t.booking_id||t['Reservation ID']||t['Booking ID']||'').toString().toUpperCase()===bid; });
+  }
+  if (a.from_date) { var f=toDate(a.from_date); if (f) result = result.filter(function(t){ return toDate(t['Date'])>=f; }); }
+  if (a.to_date) { var td=toDate(a.to_date); if(td){ td.setHours(23,59,59); result = result.filter(function(t){ return toDate(t['Date'])<=td; }); } }
+  if (a.type) { var ty=a.type.toLowerCase(); result = result.filter(function(t){ return (t._type||'').toString().toLowerCase()===ty; }); }
+  if (a.category) {
+    var catExp = normaliseExperienceType(a.category).toLowerCase();
+    var catEx = normaliseExpenseCategory(a.category).toLowerCase();
+    result = result.filter(function(t){
+      var et = (t['Experience Type']||'').toString().toLowerCase();
+      var ec = (t['Category']||'').toString().toLowerCase();
+      return et.indexOf(catExp) !== -1 || catExp.indexOf(et) !== -1 || ec.indexOf(catEx) !== -1 || catEx.indexOf(ec) !== -1;
+    });
+  }
+
+  function guestFor(bid) { var b = findBooking(bid); return b ? b['Guest Name'] : ''; }
+  return { success: true, count: result.length,
+    transactions: result.map(function(t){
+      var amt = t['Total Amount'] || t['Amount'] || t['Total Food Revenue'] || t['Amount'];
+      return { id: t['Txn ID'], booking_id: t.booking_id || t['Reservation ID'], guest: guestFor(t.booking_id || t['Reservation ID']),
+               date: t['Date'], type: t._type, category: t['Experience Type']||t['Category']||'', amount: amt, method: t['Method']||'', reference: t['Reference']||'', notes: t['Notes']||'' };
+    })};
+}
+
+function toolGetDues(a) {
+  var data = sheetToObjects(getRSV()).filter(function(r){
+    var due = Math.max(0, (Number(r['Final Amount'])||0) - (Number(r['Net Received'])||0));
+    return due > 0;
+  });
+  if (a.status) { var s=a.status.toLowerCase(); data = data.filter(function(r){ return (r['Status']||'').toString().toLowerCase()===s; }); }
+  data.sort(function(a,b){ var da = Math.max(0, (Number(a['Final Amount'])||0)-(Number(a['Net Received'])||0)); var db = Math.max(0, (Number(b['Final Amount'])||0)-(Number(b['Net Received'])||0)); return db-da; });
+  var total = data.reduce(function(s,r){ return s + Math.max(0, (Number(r['Final Amount'])||0) - (Number(r['Net Received'])||0)); }, 0);
+  return { success: true, count: data.length, total_due: total,
+    bookings: data.map(function(r){
+      var due = Math.max(0, (Number(r['Final Amount'])||0) - (Number(r['Net Received'])||0));
+      return { id: r['Reservation ID'], guest: r['Guest Name'], check_in: r['Check-in'], due: due, status: r['Status'] };
+    })};
+}
+
+function toolGetOccupancy(a) {
+  var n = new Date();
+  var from = toDate(a.from_date) || n;
+  var to = toDate(a.to_date) || new Date(n.getTime()+30*86400000);
+
+  var data = sheetToObjects(getRSV()).filter(function(r){ return (r['Status']||'').toString().toLowerCase()!=='cancelled'; });
+
+  function getCheckOut(r) {
+    var ci = toDate(r['Check-in']); var nights = parseInt(r['Nights'],10)||1;
+    if (!ci) return null;
+    var co = new Date(ci); co.setDate(co.getDate() + nights);
+    return co;
+  }
+  var inPeriod = data.filter(function(r){
+    var ci = toDate(r['Check-in']), co = getCheckOut(r);
+    return ci && co && ci<=to && co>=from;
+  });
+
+  var today_d = new Date(); today_d.setHours(0,0,0,0);
+  var current = inPeriod.filter(function(r){ var ci=toDate(r['Check-in']), co=getCheckOut(r); return ci && co && ci<=today_d && co>today_d; });
+  var upcoming = inPeriod.filter(function(r){ var ci=toDate(r['Check-in']); return ci && ci>today_d; });
+  var checkedOut = inPeriod.filter(function(r){ var co=getCheckOut(r); return co && co<=today_d; });
+
+  return { success: true,
+    period: { from: from.toLocaleDateString('en-IN'), to: to.toLocaleDateString('en-IN') },
+    current_guests: current.map(function(r){ var due = Math.max(0, (Number(r['Final Amount'])||0)-(Number(r['Net Received'])||0)); return { id: r['Reservation ID'], guest: r['Guest Name'], check_in: r['Check-in'], nights: r['Nights'], due: due }; }),
+    upcoming: upcoming.map(function(r){ return { id: r['Reservation ID'], guest: r['Guest Name'], check_in: r['Check-in'], booking_type: r['Booking Type'] }; }),
+    recently_checked_out: checkedOut.map(function(r){ var due = Math.max(0, (Number(r['Final Amount'])||0)-(Number(r['Net Received'])||0)); return { id: r['Reservation ID'], guest: r['Guest Name'], nights: r['Nights'], due: due }; })
+  };
+}
+
+function toolCheckInBooking(a) {
+  var booking = findBooking(a.booking_id);
+  if (!booking) return { error:'Booking "'+a.booking_id+'" not found.' };
+  updateBookingRow(booking['Reservation ID'], { 'Status': 'active' });
+  auditLog('system', 'check_in', 'reservation', booking['Reservation ID'], '');
+  return { success: true, booking_id: booking['Reservation ID'], guest: booking['Guest Name'], status: 'active', message: 'Marked as checked in.' };
+}
+
+function toolCheckOutBooking(a) {
+  var booking = findBooking(a.booking_id);
+  if (!booking) return { error:'Booking "'+a.booking_id+'" not found.' };
+  updateBookingRow(booking['Reservation ID'], { 'Status': 'checked_out' });
+  auditLog('system', 'check_out', 'reservation', booking['Reservation ID'], '');
+  return { success: true, booking_id: booking['Reservation ID'], guest: booking['Guest Name'], status: 'checked_out', message: 'Marked as checked out.' };
+}
+
+function toolListRooms(a) {
+  var list = sheetToObjects(getRS());
+  return { success:true, count:list.length,
+    rooms: list.map(function(r){
+      return { id:r['Room ID'], name:r['Name'], default_rate:r['Default Rate'], status:r['Status'], notes:r['Notes'] };
+    })};
+}
+
+function toolGetRoom(a) {
+  var room = getRoomById(a.room_id);
+  if (!room) return { error:'Room "'+a.room_id+'" not found.' };
+  return { success:true, room: { id:room['Room ID'], name:room['Name'], default_rate:room['Default Rate'], status:room['Status'], notes:room['Notes'] } };
+}
+
+function toolGetGuest(a) {
+  var guest = getGuestById(a.guest_id);
+  if (!guest) return { error:'Guest "'+a.guest_id+'" not found.' };
+  var bookings = sheetToObjects(getRSV()).filter(function(r){ return r['Guest ID'] && r['Guest ID'].toString().toUpperCase()===guest['Guest ID'].toString().toUpperCase(); });
+  var due = function(r){ return Math.max(0, (Number(r['Final Amount'])||0)-(Number(r['Net Received'])||0)); };
+  return { success: true,
+    guest: { id: guest['Guest ID'], name: guest['Name'], phone: guest['Phone'], email: guest['Email'], notes: guest['Notes'], created_at: guest['Created At'], last_used: guest['Last Used At'] },
+    bookings_count: bookings.length,
+    bookings: bookings.slice(0, 20).map(function(r){ return { id: r['Reservation ID'], check_in: r['Check-in'], booking_type: r['Booking Type'], nights: r['Nights'], status: r['Status'], due: due(r) }; })
+  };
+}
+
+function toolListGuests(a) {
+  var list = sheetToObjects(getGS());
+  if (a.query && a.query.toString().trim()) {
+    var q = a.query.toString().toLowerCase();
+    list = list.filter(function(r){
+      return (r['Name'] && r['Name'].toString().toLowerCase().indexOf(q)!==-1) ||
+             (r['Phone'] && r['Phone'].toString().indexOf(q)!==-1) ||
+             (r['Email'] && r['Email'].toString().toLowerCase().indexOf(q)!==-1);
+    });
+  }
+  return { success:true, count:list.length,
+    guests: list.map(function(r){
+      return { id:r['Guest ID'], name:r['Name'], phone:r['Phone'], email:r['Email'], last_used:r['Last Used At'] };
+    })};
+}
+
+function toolAddFood(a) {
+  var r = findBooking(a.booking_id);
+  if (!r) return { error: 'Reservation "' + a.booking_id + '" not found.' };
+  var txnId = nextFoodId();
+  var date = a.date ? parseDate(a.date) : today();
+  var stayNights = Number(a.stay_nights)||1;
+  var people = Number(a.people)||1;
+  var rate = Number(a.rate_per_person_per_day)||0;
+  var baseRev = Number(a.base_food_revenue)||(rate * people * stayNights);
+  var cost = Number(a.food_cost)||0;
+  var special = Number(a.special_request_charge)||0;
+  var totalRev = baseRev + special;
+  var profit = totalRev - cost;
+  getFS().appendRow([
+    txnId, r['Reservation ID'], date, a.guest || r['Guest Name'], stayNights, people, rate,
+    baseRev, cost, special, totalRev, profit, a.payee || '', a.notes || '', now()
+  ]);
+  auditLog('system', 'food_added', 'food', txnId, JSON.stringify({ reservation_id: r['Reservation ID'], guest: a.guest, profit: profit }));
+  return { success: true, txn_id: txnId, booking_id: r['Reservation ID'], guest: a.guest, total_food_revenue: totalRev, food_profit: profit };
+}
+
+function toolAddExpense(a) {
+  var txnId = nextExpenseId();
+  var date = a.date ? parseDate(a.date) : today();
+  var category = normaliseExpenseCategory(a.category || 'Misc');
+  getXS().appendRow([
+    txnId, date, category, a.sub_category || '', a.description || '', Number(a.amount)||0, a.paid_from || '', now()
+  ]);
+  auditLog('system', 'expense_added', 'expense', txnId, JSON.stringify({ category: category, amount: a.amount }));
+  return { success: true, txn_id: txnId, category: category, amount: a.amount, paid_from: a.paid_from };
+}
+
+function toolGetDashboard(a) {
+  var n = new Date();
+  var from = toDate(a.from_date) || new Date(n.getFullYear(), n.getMonth(), 1);
+  var to = toDate(a.to_date) || n;
+  to.setHours(23, 59, 59);
+
+  var allRes = sheetToObjects(getRSV());
+  var allExp = sheetToObjects(getES());
+  var allFood = sheetToObjects(getFS());
+  var allExpenses = sheetToObjects(getXS());
+
+  var reservations = allRes.filter(function(b){ var d = toDate(b['Check-in']); return d && d>=from && d<=to; });
+  var experiences = allExp.filter(function(t){ var d = toDate(t['Date']); return d && d>=from && d<=to; });
+  var food = allFood.filter(function(t){ var d = toDate(t['Date']); return d && d>=from && d<=to; });
+  var expenses = allExpenses.filter(function(t){ var d = toDate(t['Date']); return d && d>=from && d<=to; });
+
+  function sumNetReceived(arr) { return arr.reduce(function(s,b){ return s+(Number(b['Net Received'])||0); }, 0); }
+  function sumProfit(arr) { return arr.reduce(function(s,t){ return s+(Number(t['Net Profit'])||0); }, 0); }
+  function sumFoodProfit(arr) { return arr.reduce(function(s,t){ return s+(Number(t['Food Profit'])||0); }, 0); }
+  function sumAmount(arr) { return arr.reduce(function(s,t){ return s+(Number(t['Amount'])||0); }, 0); }
+
+  var stayRevenue = sumNetReceived(reservations);
+  var airbnb = reservations.filter(function(b){ return (b['Booking Source']||'').toLowerCase().indexOf('airbnb')!==-1; });
+  var direct = reservations.filter(function(b){ return (b['Booking Source']||'').toLowerCase().indexOf('airbnb')===-1; });
+  var airbnbRev = sumNetReceived(airbnb);
+  var directRev = sumNetReceived(direct);
+  var expProfit = sumProfit(experiences);
+  var foodProfit = sumFoodProfit(food);
+  var totalExp = sumAmount(expenses);
+  var netProfit = stayRevenue + expProfit + foodProfit - totalExp;
+
+  var allStay = sumNetReceived(allRes);
+  var allExpProfit = sumProfit(allExp);
+  var allFoodProfit = sumFoodProfit(allFood);
+  var allExpTotal = sumAmount(allExpenses);
+  var allNet = allStay + allExpProfit + allFoodProfit - allExpTotal;
+
+  var owing = allRes.filter(function(b){ return (Number(b['Final Amount'])||0) - (Number(b['Net Received'])||0) > 0; });
+  var totalDue = owing.reduce(function(s,b){ return s + Math.max(0, (Number(b['Final Amount'])||0) - (Number(b['Net Received'])||0)); }, 0);
+
+  function byBookingType(arr) {
+    var sky = arr.filter(function(b){ return (b['Booking Type']||'').indexOf('Sky View')!==-1; });
+    var forest = arr.filter(function(b){ return (b['Booking Type']||'').indexOf('Forest View')!==-1; });
+    var villa = arr.filter(function(b){ return (b['Booking Type']||'').indexOf('Entire Villa')!==-1 || (b['Booking Type']||'').indexOf('Vaadi')!==-1; });
+    return {
+      sky_view: { count: sky.length, revenue: sumNetReceived(sky) },
+      forest_view: { count: forest.length, revenue: sumNetReceived(forest) },
+      entire_villa: { count: villa.length, revenue: sumNetReceived(villa) }
+    };
+  }
+
+  function byExperienceType(arr) {
+    var out = {};
+    arr.forEach(function(t){
+      var type = (t['Experience Type']||'other').toString();
+      if (!out[type]) out[type] = { count: 0, total: 0, cost: 0, profit: 0 };
+      out[type].count += 1;
+      out[type].total += Number(t['Total Amount'])||0;
+      out[type].cost += Number(t['Cost'])||0;
+      out[type].profit += Number(t['Net Profit'])||0;
+    });
+    return out;
+  }
+
+  function byExpenseCategory(arr) {
+    var out = {};
+    arr.forEach(function(t){
+      var cat = (t['Category']||'Misc').toString().trim() || 'Misc';
+      out[cat] = (out[cat]||0) + (Number(t['Amount'])||0);
+    });
+    return out;
+  }
+
+  return { success: true,
+    period: { from: from.toLocaleDateString('en-IN'), to: to.toLocaleDateString('en-IN') },
+    summary_all_time: {
+      total_reservations: allRes.length,
+      stay_revenue_net: allStay,
+      airbnb_revenue: sumNetReceived(allRes.filter(function(b){ return (b['Booking Source']||'').toLowerCase().indexOf('airbnb')!==-1; })),
+      direct_revenue: sumNetReceived(allRes.filter(function(b){ return (b['Booking Source']||'').toLowerCase().indexOf('airbnb')===-1; })),
+      experience_profit: allExpProfit,
+      food_profit: allFoodProfit,
+      total_expenses: allExpTotal,
+      net_profit: allNet,
+      outstanding_dues_count: owing.length,
+      outstanding_dues_amount: totalDue
+    },
+    this_period: {
+      reservations: reservations.length,
+      stay_revenue_net: stayRevenue,
+      airbnb_revenue: airbnbRev,
+      direct_revenue: directRev,
+      experience_profit: expProfit,
+      food_profit: foodProfit,
+      total_expenses: totalExp,
+      net_profit: netProfit
+    },
+    by_booking_type: byBookingType(allRes),
+    experiences_by_type: byExperienceType(allExp),
+    expenses_by_category: byExpenseCategory(allExpenses),
+    outstanding: { count: owing.length, total_amount: totalDue, bookings: owing.slice(0, 10).map(function(b){ return { id: b['Reservation ID'], guest: b['Guest Name'], due: Math.max(0, (Number(b['Final Amount'])||0)-(Number(b['Net Received'])||0)) }; }) }
+  };
+}
+
+// Call from script editor or on a trigger to refresh Dashboard sheet with current numbers
+function refreshDashboard() {
+  var out = toolGetDashboard({});
+  var sheet = getDS();
+  var data = sheetToObjects(sheet);
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var nowStr = new Date().toLocaleString('en-IN');
+  var summary = out.summary_all_time;
+  var byType = out.by_booking_type;
+  var expByType = out.experiences_by_type;
+  var expByCat = out.expenses_by_category;
+
+  function setMetric(section, metric, value) {
+    for (var i = 0; i < data.length; i++) {
+      if (data[i]['Section'] === section && (data[i]['Metric']||'').toString().indexOf(metric) !== -1) {
+        sheet.getRange(i + 2, headers.indexOf('Value') + 1).setValue(value);
+        sheet.getRange(i + 2, headers.indexOf('Updated At') + 1).setValue(nowStr);
+        return;
+      }
+    }
+  }
+
+  setMetric('Summary', 'Total Reservations', summary.total_reservations);
+  setMetric('Summary', 'Stay Revenue', summary.stay_revenue_net);
+  setMetric('Summary', 'Airbnb Revenue', summary.airbnb_revenue);
+  setMetric('Summary', 'Direct Revenue', summary.direct_revenue);
+  setMetric('Summary', 'Experience Profit', summary.experience_profit);
+  setMetric('Summary', 'Food Profit', summary.food_profit);
+  setMetric('Summary', 'Total Expenses', summary.total_expenses);
+  setMetric('Summary', 'Net Profit', summary.net_profit);
+  setMetric('Summary', 'Outstanding Dues (count)', summary.outstanding_dues_count);
+  setMetric('Summary', 'Outstanding Dues (amount)', summary.outstanding_dues_amount);
+
+  var mon = out.this_period;
+  setMetric('Month', 'Reservations', mon.reservations);
+  setMetric('Month', 'Stay Revenue', mon.stay_revenue_net);
+  setMetric('Month', 'Experience Profit', mon.experience_profit);
+  setMetric('Month', 'Food Profit', mon.food_profit);
+  setMetric('Month', 'Expenses', mon.total_expenses);
+  setMetric('Month', 'Net Profit', mon.net_profit);
+
+  setMetric('By Type', 'Sky View Cabin (count)', byType.sky_view.count);
+  setMetric('By Type', 'Sky View Cabin (revenue)', byType.sky_view.revenue);
+  setMetric('By Type', 'Forest View Cabin (count)', byType.forest_view.count);
+  setMetric('By Type', 'Forest View Cabin (revenue)', byType.forest_view.revenue);
+  setMetric('By Type', 'Vaadi - Entire Villa (count)', byType.entire_villa.count);
+  setMetric('By Type', 'Vaadi - Entire Villa (revenue)', byType.entire_villa.revenue);
+
+  for (var type in expByType) {
+    setMetric('Experiences', type, expByType[type].profit || expByType[type].total);
+  }
+  for (var cat in expByCat) {
+    setMetric('Expenses', cat, expByCat[cat]);
+  }
+
+  Logger.log('Dashboard refreshed at ' + nowStr);
+}

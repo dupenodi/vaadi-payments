@@ -1,0 +1,10 @@
+Txn ID,Reservation ID,Date,Guest Name,Experience Type,No. of People,Price per Person,Total Amount,Cost,Net Profit,Payment Mode,Notes,Created At
+E001,R003,2026-01-17,"Sujay Biradar, Shilpa",Cab service,2,5200,10400,8000,2400,UPI,"Rishikesh to Badgaon / Badgaon to Rishikesh",
+E002,R003,2026-01-18,"Sujay Biradar, Shilpa",Trek,2,3000,6000,3000,3000,UPI,"1 day Chitrakanth trek - dipi bhai guide",
+E003,R003,2026-01-19,"Sujay Biradar, Shilpa",Custom Tour,2,2500,5000,3000,2000,UPI,"niti valley + timbersain - viru bhai cab",
+E004,R006,2026-02-06,Bhawna Pareta,Bonfire,4,250,1000,100,900,cash,500 per night,
+E005,R007,2026-02-12,Vyan Gandhi,Mattress,1,6000,6000,0,6000,cash,2000/night * 3 nights,
+E006,R007,2026-02-12,Vyan Gandhi,Horse/mule service,2,500,1000,1000,0,cash,"500 to Dipi + 500 Gokul-Jyoti-Amar-Dipi",
+E007,R010,2026-02-23,Charubhadra Gupta,Cab service,2,3500,7000,5000,2000,UPI,Jyoti UPI Rishikesh to Vaadi,
+E008,R010,2026-02-23,Charubhadra Gupta,Cab service,2,1250,2500,2500,0,UPI,Jyoti UPI Vaadi to Auli,
+E009,R010,2026-02-23,Charubhadra Gupta,Cab service,2,3250,6500,6500,0,UPI,Jyoti UPI Vaadi to Rishikesh,
