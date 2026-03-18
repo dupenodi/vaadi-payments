@@ -467,13 +467,17 @@ async function sendMessage() {
   showTyping();
 
   try {
-    const res = await fetch(BACKEND_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ history })
-    });
+    // Instead of fetch POST, use a script tag trick to bypass CORS
+    const url = BACKEND_URL + '?payload=' + encodeURIComponent(JSON.stringify({ history }));
 
-    const data = await res.json();
+    const data = await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      const cbName = 'cb_' + Date.now();
+      window[cbName] = (d) => { resolve(d); delete window[cbName]; script.remove(); };
+      script.src = url + '&callback=' + cbName;
+      script.onerror = () => reject(new Error('Script load failed'));
+      document.head.appendChild(script);
+    });
     removeTyping();
 
     if (data.ok && data.reply) {
