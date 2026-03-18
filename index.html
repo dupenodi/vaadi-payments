@@ -693,6 +693,31 @@
       document.getElementById('input').focus();
     }
 
+    function sendImagesViaGet(payloadStr) {
+      var url = BACKEND_URL + '?payload=' + encodeURIComponent(payloadStr) + '&callback=__cb';
+      var script = document.createElement('script');
+      var done = false;
+      window.__cb = function (data) {
+        done = true;
+        delete window.__cb;
+        script.remove();
+        doneSend(data);
+      };
+      script.onerror = function () {
+        if (done) return;
+        delete window.__cb;
+        script.remove();
+        removeTyping();
+        addMsg('bot', 'POST was redirected (body lost) and GET fallback failed (URL too long or network). Try: 1) One smaller image. 2) Open your Web app URL in a new tab, copy the final URL from the address bar after it loads, and use that as BACKEND_URL.', true);
+        chatHistory.pop();
+        isLoading = false;
+        document.getElementById('sendBtn').disabled = false;
+        setStatus('ready');
+      };
+      script.src = url;
+      document.head.appendChild(script);
+    }
+
     function send() {
       if (isLoading) return;
       var input = document.getElementById('input');
@@ -732,10 +757,11 @@
       showTyping();
 
       if (imagesToSend.length > 0) {
+        var payloadStr = JSON.stringify({ history: chatHistory });
         fetch(BACKEND_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'payload=' + encodeURIComponent(JSON.stringify({ history: chatHistory }))
+          body: 'payload=' + encodeURIComponent(payloadStr)
         }).then(function(r) {
           return r.text().then(function(text) {
             var t = text.trim();
@@ -758,11 +784,7 @@
             setStatus('ready');
           });
         }).catch(function(err) {
-          addMsg('bot', 'Could not send (network/CORS): ' + (err.message || 'check URL and try again.'), true);
-          chatHistory.pop();
-          isLoading = false;
-          document.getElementById('sendBtn').disabled = false;
-          setStatus('ready');
+          sendImagesViaGet(payloadStr);
         });
         return;
       }

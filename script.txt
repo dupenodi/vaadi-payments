@@ -8,7 +8,7 @@
 //   3. Run setupSheets() once — creates 9 tabs
 //   4. Deploy → Web app (Execute as: Me, Who has access: Anyone) → copy URL to index.html BACKEND_URL
 //   Menu "Vaadi" (Refresh Dashboard, Setup Sheets, About) appears when the sheet is opened and script is bound to it.
-//   Image support: frontend sends POST with JSON body when user attaches/pastes an image; doPost returns JSON with CORS headers.
+//   Image support: frontend sends POST (application/x-www-form-urlencoded, payload=...) to avoid CORS preflight; doPost returns JSON. (Apps Script does not allow setting custom response headers.)
 // ============================================================
 
 // ── CONFIG ───────────────────────────────────────────────────
@@ -603,8 +603,7 @@ function doPost(e) {
   }
   return ContentService
     .createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON)
-    .setHeader('Access-Control-Allow-Origin', '*');
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // ── Claude agentic loop (supports text + image content for vision) ─
