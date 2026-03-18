@@ -4,13 +4,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Property Manager</title>
+  <title>Cabin Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link
-    href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap"
+    href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap"
     rel="stylesheet">
   <style>
-    /* ── Reset & base ──────────────────────────────────── */
     *,
     *::before,
     *::after {
@@ -25,13 +24,12 @@
       --border: #2a2a2a;
       --border2: #333;
       --text: #e8e6df;
-      --muted: #888;
+      --muted: #777;
       --accent: #c8f060;
       --accent-dk: #9aba3c;
-      --danger: #ff6b6b;
       --user-bg: #1e2a10;
       --user-border: #3a5018;
-      --bot-bg: #181818;
+      --danger: #ff6b6b;
       --radius: 12px;
       --mono: 'DM Mono', monospace;
       --sans: 'DM Sans', sans-serif;
@@ -48,26 +46,25 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    /* ── Layout ────────────────────────────────────────── */
     .app {
       display: flex;
       flex-direction: column;
       height: 100dvh;
-      max-width: 680px;
+      max-width: 700px;
       margin: 0 auto;
     }
 
-    /* ── Header ────────────────────────────────────────── */
+    /* Header */
     .header {
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 16px 20px;
+      padding: 14px 20px;
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
 
-    .header-dot {
+    .dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
@@ -81,14 +78,10 @@
       font-size: 13px;
       font-weight: 400;
       letter-spacing: 0.08em;
-      color: var(--text);
       text-transform: uppercase;
     }
 
-    .header-sub {
-      font-family: var(--mono);
-      font-size: 11px;
-      color: var(--muted);
+    .header-right {
       margin-left: auto;
       display: flex;
       align-items: center;
@@ -99,14 +92,19 @@
       font-family: var(--mono);
       font-size: 10px;
       padding: 2px 8px;
-      border: 1px solid var(--border2);
+      border: 1px solid var(--accent);
       border-radius: 10px;
       color: var(--accent);
-      border-color: var(--accent);
       opacity: 0.7;
     }
 
-    /* ── Quick actions ─────────────────────────────────── */
+    .status-text {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* Quick chips */
     .quick-bar {
       display: flex;
       gap: 6px;
@@ -141,7 +139,7 @@
       background: rgba(200, 240, 96, 0.05);
     }
 
-    /* ── Messages ──────────────────────────────────────── */
+    /* Messages */
     .messages {
       flex: 1;
       overflow-y: auto;
@@ -188,7 +186,7 @@
     .bubble {
       padding: 12px 16px;
       border-radius: var(--radius);
-      line-height: 1.65;
+      line-height: 1.7;
       white-space: pre-wrap;
       word-break: break-word;
       font-size: 14px;
@@ -203,7 +201,7 @@
     }
 
     .msg.bot .bubble {
-      background: var(--bot-bg);
+      background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text);
       align-self: flex-start;
@@ -224,7 +222,13 @@
       border-radius: 4px;
     }
 
-    /* ── Typing indicator ──────────────────────────────── */
+    .msg.error .bubble {
+      background: rgba(255, 107, 107, 0.08);
+      border-color: rgba(255, 107, 107, 0.3);
+      color: var(--danger);
+    }
+
+    /* Typing */
     .typing-bubble {
       display: flex;
       align-items: center;
@@ -263,9 +267,9 @@
       }
     }
 
-    /* ── Input area ────────────────────────────────────── */
+    /* Input */
     .input-area {
-      padding: 16px 20px;
+      padding: 14px 20px;
       border-top: 1px solid var(--border);
       flex-shrink: 0;
     }
@@ -337,14 +341,14 @@
       height: 18px;
     }
 
-    /* ── Empty state ───────────────────────────────────── */
-    .empty-state {
+    /* Empty state */
+    .empty {
       flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
       color: var(--muted);
       font-family: var(--mono);
       font-size: 12px;
@@ -353,239 +357,224 @@
       padding: 40px;
     }
 
-    .empty-state .logo {
-      font-size: 28px;
+    .empty .icon {
+      font-size: 32px;
       margin-bottom: 8px;
-      filter: grayscale(0.3);
     }
 
-    /* ── Error state ───────────────────────────────────── */
-    .msg.error .bubble {
-      background: rgba(255, 107, 107, 0.08);
-      border-color: rgba(255, 107, 107, 0.3);
-      color: var(--danger);
+    .empty .hint {
+      font-size: 11px;
+      opacity: 0.5;
+      margin-top: 4px;
     }
 
-    /* ── Mobile tweaks ─────────────────────────────────── */
     @media (max-width: 480px) {
-      .header {
-        padding: 12px 16px;
-      }
 
-      .messages {
-        padding: 16px;
-      }
-
-      .input-area {
-        padding: 12px 16px;
-      }
-
+      .header,
+      .messages,
+      .input-area,
       .quick-bar {
-        padding: 8px 16px;
+        padding-left: 14px;
+        padding-right: 14px;
       }
     }
   </style>
 </head>
 
 <body>
-
   <div class="app">
 
     <header class="header">
-      <div class="header-dot" id="statusDot"></div>
-      <h1>Property Manager</h1>
-      <span class="header-sub">
-        <span class="model-badge" id="modelBadge">...</span>
-        <span id="headerSub">ready</span>
-      </span>
+      <div class="dot" id="dot"></div>
+      <h1>Cabin Manager</h1>
+      <div class="header-right">
+        <span class="model-badge" id="modelBadge">—</span>
+        <span class="status-text" id="statusText">ready</span>
+      </div>
     </header>
 
-    <div class="quick-bar" id="quickBar">
-      <button class="chip" onclick="quickSend('List all active bookings')">active bookings</button>
-      <button class="chip" onclick="quickSend('Add a new booking')">+ new booking</button>
-      <button class="chip" onclick="quickSend('Show me the summary for the latest booking')">latest summary</button>
-      <button class="chip" onclick="quickSend('Add a food charge')">+ food charge</button>
-      <button class="chip" onclick="quickSend('Record a cash payment')">+ payment</button>
-      <button class="chip" onclick="quickSend('Mark last booking as checked out')">check out guest</button>
+    <div class="quick-bar">
+      <button class="chip" onclick="q('List active bookings')">active bookings</button>
+      <button class="chip" onclick="q('Add new booking')">+ new booking</button>
+      <button class="chip" onclick="q('Show report for this month')">monthly report</button>
+      <button class="chip" onclick="q('Add food charge')">+ food</button>
+      <button class="chip" onclick="q('Add vehicle charge')">+ vehicle</button>
+      <button class="chip" onclick="q('Record cash payment')">+ payment</button>
+      <button class="chip" onclick="q('Mark guest as checked out')">check out</button>
+      <button class="chip" onclick="q('List all transactions today')">today txns</button>
     </div>
 
     <div class="messages" id="messages">
-      <div class="empty-state" id="emptyState">
-        <div class="logo">🏡</div>
-        <div>vaadi assistant</div>
-        <div style="opacity:0.5;font-size:11px;margin-top:4px">type a command or tap a shortcut above</div>
+      <div class="empty" id="emptyState">
+        <div class="icon">🏔️</div>
+        <div>cabin manager</div>
+        <div class="hint">type a command or tap a shortcut above</div>
       </div>
     </div>
 
     <div class="input-area">
       <div class="input-row">
-        <textarea id="input" placeholder="e.g. Add Priya Sharma, arriving March 20, leaving 25th, ₹2500/night" rows="1"
-          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-        <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+        <textarea id="input" rows="1" placeholder="e.g. Priya Sharma checked in today, 5 nights at ₹2500/night"
+          onkeydown="onKey(event)" oninput="resize(this)"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="send()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
             stroke-linejoin="round">
-            <line x1="12" y1="19" x2="12" y2="5"></line>
-            <polyline points="5 12 12 5 19 12"></polyline>
+            <line x1="12" y1="19" x2="12" y2="5" />
+            <polyline points="5 12 12 5 19 12" />
           </svg>
         </button>
       </div>
     </div>
 
   </div>
-
   <script>
-    // ── CONFIG — replace with your Apps Script web app URL ────────
-    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbyBif4c7nTyTh5La3e6pJG2RUJBQaYgkWLeDItyeDXQu1ss8tcegzmzKmfpFOGL0mg0/exec';
+    // ── CONFIG ────────────────────────────────────────────────────
+    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwTUaTrOr767gzApitgIA4qTgDjTrnt1JGBd8puAVRLu52YKlYk7CZRToCWZj98gyzT/exec';
     // ─────────────────────────────────────────────────────────────
 
-    let history = [];
-    let isLoading = false;
+    var history = [];
+    var isLoading = false;
 
-    function autoResize(el) {
+    function resize(el) {
       el.style.height = 'auto';
       el.style.height = Math.min(el.scrollHeight, 120) + 'px';
     }
 
-    function handleKey(e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
+    function onKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     }
 
-    function quickSend(text) {
+    function q(text) {
       document.getElementById('input').value = text;
-      sendMessage();
+      send();
     }
 
     function setStatus(state) {
-      const dot = document.getElementById('statusDot');
-      const sub = document.getElementById('headerSub');
+      var dot = document.getElementById('dot');
+      var txt = document.getElementById('statusText');
       if (state === 'thinking') {
         dot.style.background = '#facc15';
         dot.style.boxShadow = '0 0 8px #facc15';
-        sub.textContent = 'thinking…';
+        txt.textContent = 'thinking…';
       } else {
         dot.style.background = 'var(--accent)';
         dot.style.boxShadow = '0 0 8px var(--accent)';
-        sub.textContent = 'ready';
+        txt.textContent = 'ready';
       }
     }
 
-    function appendMessage(role, text, isError) {
-      const messages = document.getElementById('messages');
-      const empty = document.getElementById('emptyState');
+    function addMsg(role, text, isError) {
+      var wrap = document.getElementById('messages');
+      var empty = document.getElementById('emptyState');
       if (empty) empty.remove();
 
-      const div = document.createElement('div');
-      div.className = `msg ${role}${isError ? ' error' : ''}`;
+      var div = document.createElement('div');
+      div.className = 'msg ' + role + (isError ? ' error' : '');
 
-      const label = document.createElement('div');
+      var label = document.createElement('div');
       label.className = 'msg-label';
       label.textContent = role === 'user' ? 'you' : 'assistant';
 
-      const bubble = document.createElement('div');
+      var bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.innerHTML = formatText(text);
+      bubble.innerHTML = fmt(text);
 
       div.appendChild(label);
       div.appendChild(bubble);
-      messages.appendChild(div);
-      messages.scrollTop = messages.scrollHeight;
-      return div;
+      wrap.appendChild(div);
+      wrap.scrollTop = wrap.scrollHeight;
     }
 
     function showTyping() {
-      const messages = document.getElementById('messages');
-      const div = document.createElement('div');
-      div.className = 'msg bot';
-      div.id = 'typingIndicator';
-
-      const label = document.createElement('div');
-      label.className = 'msg-label';
-      label.textContent = 'assistant';
-
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble typing-bubble';
-      bubble.innerHTML = '<span></span><span></span><span></span>';
-
-      div.appendChild(label);
-      div.appendChild(bubble);
-      messages.appendChild(div);
-      messages.scrollTop = messages.scrollHeight;
+      var wrap = document.getElementById('messages');
+      var div = document.createElement('div');
+      div.className = 'msg bot'; div.id = 'typing';
+      var lbl = document.createElement('div');
+      lbl.className = 'msg-label'; lbl.textContent = 'assistant';
+      var bub = document.createElement('div');
+      bub.className = 'bubble typing-bubble';
+      bub.innerHTML = '<span></span><span></span><span></span>';
+      div.appendChild(lbl); div.appendChild(bub);
+      wrap.appendChild(div);
+      wrap.scrollTop = wrap.scrollHeight;
     }
 
     function removeTyping() {
-      const el = document.getElementById('typingIndicator');
+      var el = document.getElementById('typing');
       if (el) el.remove();
     }
 
-    function formatText(text) {
+    function fmt(text) {
       return text
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/₹[\d,]+/g, m => `<code>${m}</code>`);
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
     }
 
-    async function sendMessage() {
+    function send() {
       if (isLoading) return;
-      const input = document.getElementById('input');
-      const text = input.value.trim();
+      var input = document.getElementById('input');
+      var text = input.value.trim();
       if (!text) return;
 
       if (BACKEND_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
-        appendMessage('bot', '⚠️ Please set your BACKEND_URL in the script. Open index.html and replace YOUR_APPS_SCRIPT_URL_HERE with your Apps Script deployment URL.', true);
+        addMsg('bot', 'Set your BACKEND_URL in the script first.\nOpen index.html and replace YOUR_APPS_SCRIPT_URL_HERE with your Apps Script deployment URL.', true);
         return;
       }
 
-      input.value = '';
-      input.style.height = 'auto';
+      input.value = ''; input.style.height = 'auto';
       isLoading = true;
       document.getElementById('sendBtn').disabled = true;
       setStatus('thinking');
 
-      appendMessage('user', text);
-
-      // Add to history in Gemini format
-      history.push({ role: 'user', parts: [{ text }] });
+      addMsg('user', text);
+      history.push({ role: 'user', content: text });
 
       showTyping();
 
-      try {
-        const url = BACKEND_URL
-          + '?payload=' + encodeURIComponent(JSON.stringify({ history }))
-          + '&callback=__cb';
+      var url = BACKEND_URL
+        + '?payload=' + encodeURIComponent(JSON.stringify({ history: history }))
+        + '&callback=__cb';
 
-        const data = await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          window.__cb = (d) => { resolve(d); delete window.__cb; script.remove(); };
-          script.onerror = () => { reject(new Error('Script load failed — check BACKEND_URL')); script.remove(); };
-          script.src = url;
-          document.head.appendChild(script);
-        });
+      var script = document.createElement('script');
+      var done = false;
 
+      window.__cb = function (data) {
+        done = true;
+        delete window.__cb;
+        script.remove();
         removeTyping();
 
         if (data.ok && data.reply) {
           if (data.model) document.getElementById('modelBadge').textContent = data.model;
-          appendMessage('bot', data.reply);
+          addMsg('bot', data.reply);
           history.push({ role: 'assistant', content: data.reply });
           if (history.length > 40) history = history.slice(-40);
         } else {
-          appendMessage('bot', data.error || 'Something went wrong.', true);
+          addMsg('bot', data.error || 'Something went wrong. Please try again.', true);
           history.pop();
         }
-      } catch (err) {
-        removeTyping();
-        appendMessage('bot', 'Could not reach the backend. Check your BACKEND_URL or internet connection.\n\nError: ' + err.message, true);
-        history.pop();
-      }
 
-      isLoading = false;
-      document.getElementById('sendBtn').disabled = false;
-      setStatus('ready');
-      input.focus();
+        isLoading = false;
+        document.getElementById('sendBtn').disabled = false;
+        setStatus('ready');
+        document.getElementById('input').focus();
+      };
+
+      script.onerror = function () {
+        if (done) return;
+        delete window.__cb;
+        script.remove();
+        removeTyping();
+        addMsg('bot', 'Could not reach backend.\n\nCheck your BACKEND_URL or internet connection.', true);
+        history.pop();
+        isLoading = false;
+        document.getElementById('sendBtn').disabled = false;
+        setStatus('ready');
+      };
+
+      script.src = url;
+      document.head.appendChild(script);
     }
   </script>
 </body>
