@@ -736,10 +736,29 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: 'payload=' + encodeURIComponent(JSON.stringify({ history: chatHistory }))
-        }).then(function(r) { return r.json(); }).then(function(data) {
-          doneSend(data);
+        }).then(function(r) {
+          return r.text().then(function(text) {
+            var t = text.trim();
+            if (t.charAt(0) === '{') {
+              try {
+                var data = JSON.parse(text);
+                doneSend(data);
+                return;
+              } catch (e) { }
+            }
+            var hint = text.substring(0, 120).replace(/\s+/g, ' ');
+            if (t.indexOf('<!DOCTYPE') !== -1 || t.indexOf('<html') !== -1) {
+              addMsg('bot', 'Server returned a web page instead of JSON (often means wrong URL or app not deployed as "Anyone"). Use the Web app URL from Deploy → Manage deployments, and set access to "Anyone".', true);
+            } else {
+              addMsg('bot', 'Unexpected response (HTTP ' + r.status + '): ' + hint, true);
+            }
+            chatHistory.pop();
+            isLoading = false;
+            document.getElementById('sendBtn').disabled = false;
+            setStatus('ready');
+          });
         }).catch(function(err) {
-          addMsg('bot', 'Could not send images (try without images or check CORS/POST). ' + (err.message || ''), true);
+          addMsg('bot', 'Could not send (network/CORS): ' + (err.message || 'check URL and try again.'), true);
           chatHistory.pop();
           isLoading = false;
           document.getElementById('sendBtn').disabled = false;
