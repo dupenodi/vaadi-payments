@@ -577,7 +577,25 @@ function doGet(e) {
 function doPost(e) {
   var result;
   try {
-    var body = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
+    var body = {};
+    if (e.postData && e.postData.contents) {
+      var type = (e.postData.type || '').toLowerCase();
+      var raw = e.postData.contents;
+      if (type.indexOf('application/x-www-form-urlencoded') !== -1) {
+        var params = {};
+        raw.split('&').forEach(function(pair) {
+          var i = pair.indexOf('=');
+          if (i !== -1) {
+            var k = decodeURIComponent(pair.slice(0, i).replace(/\+/g, ' '));
+            var v = decodeURIComponent((pair.slice(i + 1) || '').replace(/\+/g, ' '));
+            params[k] = v;
+          }
+        });
+        body = params.payload ? JSON.parse(params.payload) : {};
+      } else {
+        body = JSON.parse(raw);
+      }
+    }
     var reply = runAgent(body.history || []);
     result = { ok: true, reply: reply, model: CONFIG.model };
   } catch(err) {
@@ -586,9 +604,7 @@ function doPost(e) {
   return ContentService
     .createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON)
-    .setHeader('Access-Control-Allow-Origin', '*')
-    .setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    .setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    .setHeader('Access-Control-Allow-Origin', '*');
 }
 
 // ── Claude agentic loop (supports text + image content for vision) ─

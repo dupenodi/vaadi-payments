@@ -734,8 +734,8 @@
       if (imagesToSend.length > 0) {
         fetch(BACKEND_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ history: chatHistory })
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'payload=' + encodeURIComponent(JSON.stringify({ history: chatHistory }))
         }).then(function(r) { return r.json(); }).then(function(data) {
           doneSend(data);
         }).catch(function(err) {
