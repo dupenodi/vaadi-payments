@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Property Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
+<style>
+  /* ── Reset & base ──────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0f0f0f;
+    --surface:   #181818;
+    --border:    #2a2a2a;
+    --border2:   #333;
+    --text:      #e8e6df;
+    --muted:     #888;
+    --accent:    #c8f060;
+    --accent-dk: #9aba3c;
+    --danger:    #ff6b6b;
+    --user-bg:   #1e2a10;
+    --user-border: #3a5018;
+    --bot-bg:    #181818;
+    --radius:    12px;
+    --mono:      'DM Mono', monospace;
+    --sans:      'DM Sans', sans-serif;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Layout ────────────────────────────────────────── */
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    max-width: 680px;
+    margin: 0 auto;
+  }
+
+  /* ── Header ────────────────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .header-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    flex-shrink: 0;
+  }
+
+  .header h1 {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    color: var(--text);
+    text-transform: uppercase;
+  }
+
+  .header-sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+
+  /* ── Quick actions ─────────────────────────────────── */
+  .quick-bar {
+    display: flex;
+    gap: 6px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    flex-shrink: 0;
+    scrollbar-width: none;
+  }
+  .quick-bar::-webkit-scrollbar { display: none; }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 12px;
+    border: 1px solid var(--border2);
+    border-radius: 20px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+    letter-spacing: 0.04em;
+  }
+  .chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(200, 240, 96, 0.05);
+  }
+
+  /* ── Messages ──────────────────────────────────────── */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .msg {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    animation: fadeUp 0.2s ease;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .msg.user .msg-label { text-align: right; }
+
+  .bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 14px;
+  }
+
+  .msg.user  .bubble {
+    background: var(--user-bg);
+    border: 1px solid var(--user-border);
+    color: #d4e8a0;
+    align-self: flex-end;
+    max-width: 85%;
+  }
+
+  .msg.bot .bubble {
+    background: var(--bot-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    align-self: flex-start;
+    max-width: 95%;
+  }
+
+  .msg.bot .bubble strong {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .msg.bot .bubble code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: rgba(200, 240, 96, 0.08);
+    color: var(--accent);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  /* ── Typing indicator ──────────────────────────────── */
+  .typing-bubble {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 14px 18px;
+  }
+
+  .typing-bubble span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: bounce 1.2s infinite;
+  }
+  .typing-bubble span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-bubble span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-5px); opacity: 1; }
+  }
+
+  /* ── Input area ────────────────────────────────────── */
+  .input-area {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+
+  textarea {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 10px 14px;
+    resize: none;
+    min-height: 42px;
+    max-height: 120px;
+    outline: none;
+    transition: border-color 0.15s;
+    overflow-y: auto;
+  }
+  textarea::placeholder { color: var(--muted); }
+  textarea:focus { border-color: var(--accent); }
+
+  .send-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #0f0f0f;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .send-btn:hover  { background: var(--accent-dk); border-color: var(--accent-dk); }
+  .send-btn:active { transform: scale(0.95); }
+  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .send-btn svg { width: 18px; height: 18px; }
+
+  /* ── Empty state ───────────────────────────────────── */
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-align: center;
+    padding: 40px;
+  }
+  .empty-state .logo {
+    font-size: 28px;
+    margin-bottom: 8px;
+    filter: grayscale(0.3);
+  }
+
+  /* ── Error state ───────────────────────────────────── */
+  .msg.error .bubble {
+    background: rgba(255, 107, 107, 0.08);
+    border-color: rgba(255, 107, 107, 0.3);
+    color: var(--danger);
+  }
+
+  /* ── Mobile tweaks ─────────────────────────────────── */
+  @media (max-width: 480px) {
+    .header { padding: 12px 16px; }
+    .messages { padding: 16px; }
+    .input-area { padding: 12px 16px; }
+    .quick-bar { padding: 8px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <header class="header">
+    <div class="header-dot" id="statusDot"></div>
+    <h1>Property Manager</h1>
+    <span class="header-sub" id="headerSub">ready</span>
+  </header>
+
+  <div class="quick-bar" id="quickBar">
+    <button class="chip" onclick="quickSend('List all active bookings')">active bookings</button>
+    <button class="chip" onclick="quickSend('Add a new booking')">+ new booking</button>
+    <button class="chip" onclick="quickSend('Show me the summary for the latest booking')">latest summary</button>
+    <button class="chip" onclick="quickSend('Add a food charge')">+ food charge</button>
+    <button class="chip" onclick="quickSend('Record a cash payment')">+ payment</button>
+    <button class="chip" onclick="quickSend('Mark last booking as checked out')">check out guest</button>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="empty-state" id="emptyState">
+      <div class="logo">🏡</div>
+      <div>your property assistant</div>
+      <div style="opacity:0.5;font-size:11px;margin-top:4px">type a command or tap a shortcut above</div>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <div class="input-row">
+      <textarea
+        id="input"
+        placeholder="e.g. Add Priya Sharma, arriving March 20, leaving 25th, ₹2500/night"
+        rows="1"
+        onkeydown="handleKey(event)"
+        oninput="autoResize(this)"
+      ></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5"></line>
+          <polyline points="5 12 12 5 19 12"></polyline>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── CONFIG — replace with your Apps Script web app URL ────────
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbyBif4c7nTyTh5La3e6pJG2RUJBQaYgkWLeDItyeDXQu1ss8tcegzmzKmfpFOGL0mg0/exec';
+// ─────────────────────────────────────────────────────────────
+
+let history = [];
+let isLoading = false;
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function quickSend(text) {
+  document.getElementById('input').value = text;
+  sendMessage();
+}
+
+function setStatus(state) {
+  const dot = document.getElementById('statusDot');
+  const sub = document.getElementById('headerSub');
+  if (state === 'thinking') {
+    dot.style.background = '#facc15';
+    dot.style.boxShadow = '0 0 8px #facc15';
+    sub.textContent = 'thinking…';
+  } else {
+    dot.style.background = 'var(--accent)';
+    dot.style.boxShadow = '0 0 8px var(--accent)';
+    sub.textContent = 'ready';
+  }
+}
+
+function appendMessage(role, text, isError) {
+  const messages = document.getElementById('messages');
+  const empty    = document.getElementById('emptyState');
+  if (empty) empty.remove();
+
+  const div = document.createElement('div');
+  div.className = `msg ${role}${isError ? ' error' : ''}`;
+
+  const label   = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = role === 'user' ? 'you' : 'assistant';
+
+  const bubble  = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = formatText(text);
+
+  div.appendChild(label);
+  div.appendChild(bubble);
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+
+function showTyping() {
+  const messages = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.id = 'typingIndicator';
+
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = 'assistant';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble typing-bubble';
+  bubble.innerHTML = '<span></span><span></span><span></span>';
+
+  div.appendChild(label);
+  div.appendChild(bubble);
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function removeTyping() {
+  const el = document.getElementById('typingIndicator');
+  if (el) el.remove();
+}
+
+function formatText(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/₹[\d,]+/g, m => `<code>${m}</code>`);
+}
+
+async function sendMessage() {
+  if (isLoading) return;
+  const input = document.getElementById('input');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  if (BACKEND_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
+    appendMessage('bot', '⚠️ Please set your BACKEND_URL in the script. Open index.html and replace YOUR_APPS_SCRIPT_URL_HERE with your Apps Script deployment URL.', true);
+    return;
+  }
+
+  input.value = '';
+  input.style.height = 'auto';
+  isLoading = true;
+  document.getElementById('sendBtn').disabled = true;
+  setStatus('thinking');
+
+  appendMessage('user', text);
+
+  // Add to history in Gemini format
+  history.push({ role: 'user', parts: [{ text }] });
+
+  showTyping();
+
+  try {
+    const res = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ history })
+    });
+
+    const data = await res.json();
+    removeTyping();
+
+    if (data.ok && data.reply) {
+      appendMessage('bot', data.reply);
+      // Add assistant reply to history
+      history.push({ role: 'model', parts: [{ text: data.reply }] });
+      // Keep history from growing too large (last 20 turns)
+      if (history.length > 40) history = history.slice(-40);
+    } else {
+      const errMsg = data.error || 'Something went wrong. Please try again.';
+      appendMessage('bot', errMsg, true);
+      // Remove the failed user message from history
+      history.pop();
+    }
+  } catch (err) {
+    removeTyping();
+    appendMessage('bot', 'Could not reach the backend. Check your internet connection or BACKEND_URL.', true);
+    history.pop();
+  }
+
+  isLoading = false;
+  document.getElementById('sendBtn').disabled = false;
+  setStatus('ready');
+  input.focus();
+}
+</script>
+</body>
+</html>
