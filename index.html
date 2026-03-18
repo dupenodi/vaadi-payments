@@ -341,62 +341,6 @@
       height: 18px;
     }
 
-    .attach-btn {
-      width: 42px;
-      height: 42px;
-      border-radius: 10px;
-      border: 1px solid var(--border2);
-      background: var(--surface);
-      color: var(--muted);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: border-color 0.15s, color 0.15s;
-    }
-    .attach-btn:hover { border-color: var(--accent); color: var(--accent); }
-    .attach-btn svg { width: 20px; height: 20px; }
-    .attach-btn input { display: none; }
-
-    .img-preview {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      margin-top: 8px;
-      padding: 8px 10px;
-      background: var(--surface);
-      border-radius: 8px;
-      border: 1px solid var(--border2);
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .img-preview-item {
-      position: relative;
-      flex-shrink: 0;
-    }
-    .img-preview-item img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; display: block; }
-    .img-preview-item .remove-one {
-      position: absolute;
-      top: -4px;
-      right: -4px;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: var(--danger);
-      color: #fff;
-      border: none;
-      cursor: pointer;
-      font-size: 12px;
-      line-height: 1;
-      padding: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .img-preview .remove-img { cursor: pointer; color: var(--danger); margin-left: auto; }
-
     /* Empty state */
     .empty {
       flex: 1;
@@ -470,14 +414,8 @@
 
     <div class="input-area">
       <div class="input-row">
-        <label class="attach-btn" title="Attach images (e.g. Airbnb screenshots)">
-          <input type="file" id="fileInput" accept="image/*" multiple />
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-          </svg>
-        </label>
-        <textarea id="input" rows="1" placeholder="e.g. Priya Sharma checked in today, 5 nights at ₹2500/night — or paste an Airbnb screenshot"
-          onkeydown="onKey(event)" oninput="resize(this)" onpaste="onPaste(event)"></textarea>
+        <textarea id="input" rows="1" placeholder="e.g. Priya Sharma checked in today, 5 nights at ₹2500/night"
+          onkeydown="onKey(event)" oninput="resize(this)"></textarea>
         <button class="send-btn" id="sendBtn" onclick="send()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
             stroke-linejoin="round">
@@ -485,11 +423,6 @@
             <polyline points="5 12 12 5 19 12" />
           </svg>
         </button>
-      </div>
-      <div class="img-preview" id="imgPreview" style="display: none;">
-        <div id="imgPreviewList"></div>
-        <span id="imgPreviewText"></span>
-        <span class="remove-img" id="removeImg" onclick="clearPendingImages()">Clear all</span>
       </div>
     </div>
 
@@ -501,104 +434,6 @@
 
     var chatHistory = [];
     var isLoading = false;
-    var pendingImages = []; // [{ data, media_type }, ...]
-    var MAX_IMAGES = 10;
-    var MAX_IMAGE_PX = 1024;
-    var JPEG_QUALITY = 0.75;
-
-    function compressImage(file) {
-      return new Promise(function(resolve) {
-        var img = new Image();
-        var url = URL.createObjectURL(file);
-        img.onload = function() {
-          URL.revokeObjectURL(url);
-          var c = document.createElement('canvas');
-          var w = img.width, h = img.height;
-          if (w > MAX_IMAGE_PX || h > MAX_IMAGE_PX) {
-            if (w > h) { h = Math.round(h * MAX_IMAGE_PX / w); w = MAX_IMAGE_PX; }
-            else { w = Math.round(w * MAX_IMAGE_PX / h); h = MAX_IMAGE_PX; }
-          }
-          c.width = w; c.height = h;
-          var ctx = c.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
-          var dataUrl = c.toDataURL('image/jpeg', JPEG_QUALITY);
-          resolve({ data: dataUrl.split(',')[1], media_type: 'image/jpeg' });
-        };
-        img.onerror = function() { URL.revokeObjectURL(url); resolve(null); };
-        img.src = url;
-      });
-    }
-
-    function renderImgPreview() {
-      var el = document.getElementById('imgPreview');
-      var list = document.getElementById('imgPreviewList');
-      var text = document.getElementById('imgPreviewText');
-      list.innerHTML = '';
-      if (pendingImages.length === 0) {
-        el.style.display = 'none';
-        return;
-      }
-      el.style.display = 'flex';
-      pendingImages.forEach(function(obj, i) {
-        var wrap = document.createElement('div');
-        wrap.className = 'img-preview-item';
-        var thumb = document.createElement('img');
-        thumb.src = 'data:image/jpeg;base64,' + obj.data;
-        thumb.alt = 'Preview ' + (i + 1);
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'remove-one';
-        btn.innerHTML = '&times;';
-        btn.title = 'Remove';
-        btn.onclick = (function(idx) { return function() { removePendingImage(idx); }; })(i);
-        wrap.appendChild(thumb);
-        wrap.appendChild(btn);
-        list.appendChild(wrap);
-      });
-      text.textContent = pendingImages.length + ' image(s) attached — send to extract booking info';
-    }
-
-    function addPendingImage(obj) {
-      if (!obj) return;
-      if (pendingImages.length >= MAX_IMAGES) return;
-      pendingImages.push(obj);
-      renderImgPreview();
-    }
-
-    function removePendingImage(index) {
-      pendingImages.splice(index, 1);
-      renderImgPreview();
-    }
-
-    function clearPendingImages() {
-      pendingImages = [];
-      renderImgPreview();
-      document.getElementById('fileInput').value = '';
-    }
-
-    function onPaste(e) {
-      var items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
-      if (!items) return;
-      for (var i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          e.preventDefault();
-          var file = items[i].getAsFile();
-          if (file) compressImage(file).then(function(obj) { addPendingImage(obj); });
-          return;
-        }
-      }
-    }
-
-    document.getElementById('fileInput').addEventListener('change', function() {
-      var input = this;
-      var files = Array.prototype.slice.call(input.files || []);
-      input.value = '';
-      files.forEach(function(f) {
-        if (pendingImages.length >= MAX_IMAGES) return;
-        if (f.type.indexOf('image') === -1) return;
-        compressImage(f).then(function(obj) { addPendingImage(obj); });
-      });
-    });
 
     function resize(el) {
       el.style.height = 'auto';
@@ -676,56 +511,11 @@
         .replace(/`([^`]+)`/g, '<code>$1</code>');
     }
 
-    function doneSend(data) {
-      removeTyping();
-      if (data.ok && data.reply) {
-        if (data.model) document.getElementById('modelBadge').textContent = data.model;
-        addMsg('bot', data.reply);
-        chatHistory.push({ role: 'assistant', content: data.reply });
-        if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
-      } else {
-        addMsg('bot', data.error || 'Something went wrong. Please try again.', true);
-        chatHistory.pop();
-      }
-      isLoading = false;
-      document.getElementById('sendBtn').disabled = false;
-      setStatus('ready');
-      document.getElementById('input').focus();
-    }
-
-    function sendImagesViaGet(payloadStr) {
-      var url = BACKEND_URL + '?payload=' + encodeURIComponent(payloadStr) + '&callback=__cb';
-      var script = document.createElement('script');
-      var done = false;
-      window.__cb = function (data) {
-        done = true;
-        delete window.__cb;
-        script.remove();
-        doneSend(data);
-      };
-      script.onerror = function () {
-        if (done) return;
-        delete window.__cb;
-        script.remove();
-        removeTyping();
-        addMsg('bot', 'POST was redirected (body lost) and GET fallback failed (URL too long or network). Try: 1) One smaller image. 2) Open your Web app URL in a new tab, copy the final URL from the address bar after it loads, and use that as BACKEND_URL.', true);
-        chatHistory.pop();
-        isLoading = false;
-        document.getElementById('sendBtn').disabled = false;
-        setStatus('ready');
-      };
-      script.src = url;
-      document.head.appendChild(script);
-    }
-
     function send() {
       if (isLoading) return;
       var input = document.getElementById('input');
       var text = input.value.trim();
-      if (!text && pendingImages.length === 0) return;
-      var n = pendingImages.length;
-      var displayText = text || (n > 0 ? (n === 1 ? '(1 image)' : '(' + n + ' images)') : '');
-      if (!displayText) return;
+      if (!text) return;
 
       if (BACKEND_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
         addMsg('bot', 'Set your BACKEND_URL in the script first.\nOpen index.html and replace YOUR_APPS_SCRIPT_URL_HERE with your Apps Script deployment URL.', true);
@@ -733,61 +523,14 @@
       }
 
       input.value = ''; input.style.height = 'auto';
-      var imagesToSend = pendingImages.slice();
-      clearPendingImages();
-
       isLoading = true;
       document.getElementById('sendBtn').disabled = true;
       setStatus('thinking');
 
-      addMsg('user', displayText);
-      var userContent;
-      if (imagesToSend.length > 0) {
-        userContent = [
-          { type: 'text', text: text || 'Extract booking/reservation details from these screenshots and add or update the booking(s).' }
-        ];
-        imagesToSend.forEach(function(img) {
-          userContent.push({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } });
-        });
-      } else {
-        userContent = text;
-      }
-      chatHistory.push({ role: 'user', content: userContent });
+      addMsg('user', text);
+      chatHistory.push({ role: 'user', content: text });
 
       showTyping();
-
-      if (imagesToSend.length > 0) {
-        var payloadStr = JSON.stringify({ history: chatHistory });
-        fetch(BACKEND_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'payload=' + encodeURIComponent(payloadStr)
-        }).then(function(r) {
-          return r.text().then(function(text) {
-            var t = text.trim();
-            if (t.charAt(0) === '{') {
-              try {
-                var data = JSON.parse(text);
-                doneSend(data);
-                return;
-              } catch (e) { }
-            }
-            var hint = text.substring(0, 120).replace(/\s+/g, ' ');
-            if (t.indexOf('<!DOCTYPE') !== -1 || t.indexOf('<html') !== -1) {
-              addMsg('bot', 'Server returned a web page instead of JSON (often means wrong URL or app not deployed as "Anyone"). Use the Web app URL from Deploy → Manage deployments, and set access to "Anyone".', true);
-            } else {
-              addMsg('bot', 'Unexpected response (HTTP ' + r.status + '): ' + hint, true);
-            }
-            chatHistory.pop();
-            isLoading = false;
-            document.getElementById('sendBtn').disabled = false;
-            setStatus('ready');
-          });
-        }).catch(function(err) {
-          sendImagesViaGet(payloadStr);
-        });
-        return;
-      }
 
       var url = BACKEND_URL
         + '?payload=' + encodeURIComponent(JSON.stringify({ history: chatHistory }))
@@ -800,7 +543,22 @@
         done = true;
         delete window.__cb;
         script.remove();
-        doneSend(data);
+        removeTyping();
+
+        if (data.ok && data.reply) {
+          if (data.model) document.getElementById('modelBadge').textContent = data.model;
+          addMsg('bot', data.reply);
+          chatHistory.push({ role: 'assistant', content: data.reply });
+          if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
+        } else {
+          addMsg('bot', data.error || 'Something went wrong. Please try again.', true);
+          chatHistory.pop();
+        }
+
+        isLoading = false;
+        document.getElementById('sendBtn').disabled = false;
+        setStatus('ready');
+        document.getElementById('input').focus();
       };
 
       script.onerror = function () {

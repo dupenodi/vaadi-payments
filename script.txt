@@ -8,7 +8,6 @@
 //   3. Run setupSheets() once — creates 9 tabs
 //   4. Deploy → Web app (Execute as: Me, Who has access: Anyone) → copy URL to index.html BACKEND_URL
 //   Menu "Vaadi" (Refresh Dashboard, Setup Sheets, About) appears when the sheet is opened and script is bound to it.
-//   Image support: frontend sends POST (application/x-www-form-urlencoded, payload=...) to avoid CORS preflight; doPost returns JSON. (Apps Script does not allow setting custom response headers.)
 // ============================================================
 
 // ── CONFIG ───────────────────────────────────────────────────
@@ -547,7 +546,6 @@ var SYSTEM_PROMPT = [
   '- If user says "update/fix/correct a charge or payment" use edit_transaction, not add_charge/add_payment',
   '- If user says "wrong entry" or "mistake" offer to delete_transaction or edit_transaction',
   '- When creating a booking from Airbnb: use booking_source=Airbnb; Final Amount = subtotal after discount (amount before tax/fee); total_discount = nightly rate adjustment; tax (5%) and airbnb_fee (15.5%) on that subtotal; net_received = host payout. Check-out must be after check-in.',
-  '- You can receive images. When the user sends a screenshot (e.g. Airbnb booking details, payout breakdown, or confirmation): look at the image and extract guest name, check-in/check-out dates, nights, confirmation code, gross amount, discount, tax, fee, net payout, booking date. Then use add_booking (or edit_booking if updating) with the extracted fields. If the image shows only partial info, ask for the rest or infer what you can.',
   '- After every tool call reply with a short, friendly summary',
   '- Show all amounts with the rupee symbol',
   '- Keep replies brief — this is a quick admin tool',
@@ -557,7 +555,7 @@ var SYSTEM_PROMPT = [
   })
 ].join('\n');
 
-// ── Web app entry: GET = JSONP (no CORS), POST = JSON body (for images / large payloads)
+// ── JSONP entry point ─────────────────────────────────────────
 function doGet(e) {
   var callback = e.parameter.callback;
   var payload  = e.parameter.payload;
@@ -574,45 +572,11 @@ function doGet(e) {
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
 }
 
-function doPost(e) {
-  var result;
-  try {
-    var body = {};
-    if (e.postData && e.postData.contents) {
-      var type = (e.postData.type || '').toLowerCase();
-      var raw = e.postData.contents;
-      if (type.indexOf('application/x-www-form-urlencoded') !== -1) {
-        var params = {};
-        raw.split('&').forEach(function(pair) {
-          var i = pair.indexOf('=');
-          if (i !== -1) {
-            var k = decodeURIComponent(pair.slice(0, i).replace(/\+/g, ' '));
-            var v = decodeURIComponent((pair.slice(i + 1) || '').replace(/\+/g, ' '));
-            params[k] = v;
-          }
-        });
-        body = params.payload ? JSON.parse(params.payload) : {};
-      } else {
-        body = JSON.parse(raw);
-      }
-    }
-    var reply = runAgent(body.history || []);
-    result = { ok: true, reply: reply, model: CONFIG.model };
-  } catch(err) {
-    result = { ok: false, error: err.message };
-  }
-  return ContentService
-    .createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-// ── Claude agentic loop (supports text + image content for vision) ─
+// ── Claude agentic loop ───────────────────────────────────────
 function runAgent(history) {
   var messages = history.map(function(h) {
+    if (Array.isArray(h.content)) return h;
     var role = h.role === 'model' ? 'assistant' : h.role;
-    if (Array.isArray(h.content)) {
-      return { role: role, content: h.content };
-    }
     var text = typeof h.content === 'string' ? h.content
              : (h.parts && h.parts[0] ? h.parts[0].text || '' : '');
     return { role: role, content: text };
